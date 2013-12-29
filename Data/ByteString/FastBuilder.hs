@@ -1,6 +1,7 @@
 module Data.ByteString.FastBuilder
   ( Builder
   , primBounded
+  , primFixed
   , rebuild
   , toBufferWriter
   , toLazyByteString

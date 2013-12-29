@@ -133,6 +133,10 @@ primBounded prim !x = mappend (ensureBytes $ PI.sizeBound prim) $ mkBuilder $ do
   setCur cur'
 {-# INLINE primBounded #-}
 
+primFixed :: PI.FixedPrim a -> a -> Builder
+primFixed prim x = primBounded (PI.toB prim) x
+{-# INLINE primFixed #-}
+
 rebuild :: (State# RealWorld -> Builder) -> Builder
 rebuild f = Builder $ \dex cur end s ->
   let Builder g = f realWorld#
