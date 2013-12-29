@@ -18,6 +18,7 @@ import Foreign.Ptr
 import System.IO.Unsafe
 
 import GHC.Exts (Addr#, State#, RealWorld, Ptr(..), Int(..), Int#)
+import GHC.Exts (realWorld#)
 import GHC.IO (IO(..), unIO)
 
 import qualified Data.ByteString.Builder.Prim as P
@@ -131,6 +132,11 @@ primBounded prim !x = mappend (ensureBytes $ PI.sizeBound prim) $ mkBuilder $ do
   cur' <- io $ PI.runB prim x cur
   setCur cur'
 {-# INLINE primBounded #-}
+
+rebuild :: (State# RealWorld -> Builder) -> Builder
+rebuild f = Builder $ \dex cur end s ->
+  let Builder g = f realWorld#
+  in g dex cur end s
 
 toBufferWriter :: Builder -> X.BufferWriter
 toBufferWriter b buf0 sz0 = do
