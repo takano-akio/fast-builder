@@ -41,11 +41,13 @@ data More
   = NoMore
   | MoreBuffer {-# UNPACK #-} !Int
   | InsertByteString !S.ByteString
+data BuilderArg = BuilderArg
+  !DataExchange
+  {-# UNPACK #-} !(Ptr Word8)
+  {-# UNPACK #-} !(Ptr Word8)
 
 newtype Builder = Builder
-  ( DataExchange
-  -> Addr#
-  -> Addr#
+  ( BuilderArg
   -> State# RealWorld
   -> (# Addr#, Addr#, State# RealWorld #)
   )
@@ -70,14 +72,14 @@ runBuild dex@(Dex reqV respV) (Build f) = do
   return x
 
 mkBuilder :: Build () -> Builder
-mkBuilder (Build bb) = Builder $ \dex cur end s -> 
-  let !(# s1, (Ptr cur', Ptr end', _) #) = unIO (bb dex (Ptr cur) (Ptr end)) s
+mkBuilder (Build bb) = Builder $ \(BuilderArg dex cur end) s ->
+  let !(# s1, (Ptr cur', Ptr end', _) #) = unIO (bb dex cur end) s
   in (# cur', end', s1 #)
 {-# INLINE mkBuilder #-}
 
 runBuilder :: Builder -> Build ()
-runBuilder (Builder b) = Build $ \dex (Ptr cur) (Ptr end) -> IO $ \s ->
-  let !(# cur', end', s1 #) = b dex cur end s
+runBuilder (Builder b) = Build $ \dex cur end -> IO $ \s ->
+  let !(# cur', end', s1 #) = b (BuilderArg dex cur end) s
   in (# s1, (Ptr cur', Ptr end', ()) #)
 {-# INLINE runBuilder #-}
 
@@ -119,9 +121,9 @@ instance IsString Builder where
   fromString = primMapListBounded P.charUtf8
 
 rebuild :: (State# RealWorld -> Builder) -> Builder
-rebuild f = Builder $ \dex cur end s ->
+rebuild f = Builder $ \arg s ->
   let Builder g = f realWorld#
-  in g dex cur end s
+  in g arg s
 
 toBufferWriter :: Builder -> X.BufferWriter
 toBufferWriter b buf0 sz0 = do
