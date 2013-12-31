@@ -2,6 +2,7 @@
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
+
 module Data.ByteString.FastBuilder.Base where
 
 import Control.Applicative
@@ -10,10 +11,13 @@ import Control.Concurrent.MVar
 import Control.Monad
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as S
+import qualified Data.ByteString.Unsafe as S
 import qualified Data.ByteString.Lazy as L
 import Data.Monoid
+import Data.String
 import Data.Word
 import Foreign.ForeignPtr
+import Foreign.Marshal.Utils
 import Foreign.Ptr
 import System.IO.Unsafe
 
@@ -97,21 +101,6 @@ io x = Build $ \_ cur end -> do
   v <- x
   return (cur, end, v)
 
-getBytes :: Int# -> Builder
-getBytes n = mkBuilder $ do
-  dex@(Dex _ respV) <- getDex
-  cur <- getCur
-  io $ putMVar respV $ Response cur $ MoreBuffer $ I# n
-  handleRequest dex
-{-# NOINLINE getBytes #-}
-
-ensureBytes :: Int -> Builder
-ensureBytes n@(I# n#) = mkBuilder $ do
-  cur <- getCur
-  end <- getEnd
-  when (cur `plusPtr` n >= end) $ runBuilder $ getBytes n#
-{-# INLINE ensureBytes #-}
-
 handleRequest :: DataExchange -> Build ()
 handleRequest (Dex reqV _) = do
   Request newCur newEnd <- io $ takeMVar reqV
@@ -126,16 +115,8 @@ instance Monoid Builder where
   mconcat xs = foldr mappend mempty xs
   {-# INLINE mconcat #-}
 
-primBounded :: PI.BoundedPrim a -> a -> Builder
-primBounded prim !x = mappend (ensureBytes $ PI.sizeBound prim) $ mkBuilder $ do
-  cur <- getCur
-  cur' <- io $ PI.runB prim x cur
-  setCur cur'
-{-# INLINE primBounded #-}
-
-primFixed :: PI.FixedPrim a -> a -> Builder
-primFixed prim x = primBounded (PI.toB prim) x
-{-# INLINE primFixed #-}
+instance IsString Builder where
+  fromString = primMapListBounded P.charUtf8
 
 rebuild :: (State# RealWorld -> Builder) -> Builder
 rebuild f = Builder $ \dex cur end s ->
@@ -180,6 +161,69 @@ toLazyByteString = L.fromChunks . makeChunks defaultBufferSize . toBufferWriter
         then rest
         else S.fromForeignPtr fptr 0 written : rest
 
-intDec :: Int -> Builder
-intDec = primBounded P.intDec
-{-# INLINE intDec #-}
+----------------------------------------------------------------
+-- builders
+
+primBounded :: PI.BoundedPrim a -> a -> Builder
+primBounded prim !x = mappend (ensureBytes $ PI.sizeBound prim) $ mkBuilder $ do
+  cur <- getCur
+  cur' <- io $ PI.runB prim x cur
+  setCur cur'
+{-# INLINE primBounded #-}
+
+primFixed :: PI.FixedPrim a -> a -> Builder
+primFixed prim x = primBounded (PI.toB prim) x
+{-# INLINE primFixed #-}
+
+primMapListBounded :: PI.BoundedPrim a -> [a] -> Builder
+primMapListBounded prim = \xs -> mconcat $ map (primBounded prim) xs
+{-# INLINE primMapListBounded #-}
+
+primMapListFixed :: PI.FixedPrim a -> [a] -> Builder
+primMapListFixed prim = \xs -> primMapListBounded (PI.toB prim) xs
+{-# INLINE primMapListFixed #-}
+
+byteString :: S.ByteString -> Builder
+byteString = byteStringThreshold maximalCopySize
+{-# INLINE byteString #-}
+
+maximalCopySize :: Int
+maximalCopySize = 2 * X.smallChunkSize
+
+byteStringThreshold :: Int -> S.ByteString -> Builder
+byteStringThreshold th bstr = rebuild $ \_ ->
+  if S.length bstr >= th
+    then byteStringInsert bstr
+    else byteStringCopy bstr
+
+byteStringCopy :: S.ByteString -> Builder
+byteStringCopy bstr = mkBuilder $ do
+  runBuilder $ ensureBytes (S.length bstr)
+  cur <- getCur
+  io $ S.unsafeUseAsCString bstr $ \ptr ->
+    copyBytes cur (castPtr ptr) len
+  setCur $ cur `plusPtr` len
+  where
+    !len = S.length bstr
+
+byteStringInsert :: S.ByteString -> Builder
+byteStringInsert bstr = mkBuilder $ do
+  dex@(Dex _ respV) <- getDex
+  cur <- getCur
+  io $ putMVar respV $ Response cur $ InsertByteString $ bstr
+  handleRequest dex
+
+getBytes :: Int# -> Builder
+getBytes n = mkBuilder $ do
+  dex@(Dex _ respV) <- getDex
+  cur <- getCur
+  io $ putMVar respV $ Response cur $ MoreBuffer $ I# n
+  handleRequest dex
+{-# NOINLINE getBytes #-}
+
+ensureBytes :: Int -> Builder
+ensureBytes n@(I# n#) = mkBuilder $ do
+  cur <- getCur
+  end <- getEnd
+  when (cur `plusPtr` n >= end) $ runBuilder $ getBytes n#
+{-# INLINE ensureBytes #-}
