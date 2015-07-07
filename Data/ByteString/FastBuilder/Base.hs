@@ -55,6 +55,10 @@ newtype Builder = Builder
 newtype Build a = Build (DataExchange -> Ptr Word8 -> Ptr Word8 -> IO (Ptr Word8, Ptr Word8, a))
   deriving (Functor)
 
+instance Applicative Build where
+  pure = return
+  (<*>) = ap
+
 instance Monad Build where
   return x = Build $ \_ cur end -> return (cur, end, x)
   {-# INLINE return #-}
