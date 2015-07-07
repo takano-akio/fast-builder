@@ -23,6 +23,7 @@ import System.IO.Unsafe
 
 import GHC.Exts (Addr#, State#, RealWorld, Ptr(..), Int(..), Int#)
 import GHC.Exts (realWorld#)
+import GHC.Magic (oneShot)
 import GHC.IO (IO(..), unIO)
 
 import qualified Data.ByteString.Builder.Prim as P
@@ -124,10 +125,8 @@ instance Monoid Builder where
 instance IsString Builder where
   fromString = primMapListBounded P.charUtf8
 
-rebuild :: (State# RealWorld -> Builder) -> Builder
-rebuild f = Builder $ \arg s ->
-  let Builder g = f realWorld#
-  in g arg s
+rebuild :: Builder -> Builder
+rebuild (Builder f) = Builder $ oneShot (\arg s -> f arg s)
 
 toBufferWriter :: Builder -> X.BufferWriter
 toBufferWriter b buf0 sz0 = do
@@ -197,7 +196,7 @@ maximalCopySize :: Int
 maximalCopySize = 2 * X.smallChunkSize
 
 byteStringThreshold :: Int -> S.ByteString -> Builder
-byteStringThreshold th bstr = rebuild $ \_ ->
+byteStringThreshold th bstr = rebuild $
   if S.length bstr >= th
     then byteStringInsert bstr
     else byteStringCopy bstr
