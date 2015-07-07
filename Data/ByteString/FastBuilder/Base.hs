@@ -16,6 +16,8 @@ import qualified Data.ByteString.Lazy as L
 import Data.Monoid
 import Data.String
 import Data.Word
+import Foreign.C.String
+import Foreign.C.Types
 import Foreign.ForeignPtr
 import Foreign.Marshal.Utils
 import Foreign.Ptr
@@ -25,6 +27,7 @@ import GHC.Exts (Addr#, State#, RealWorld, Ptr(..), Int(..), Int#)
 import GHC.Exts (realWorld#)
 import GHC.Magic (oneShot)
 import GHC.IO (IO(..), unIO)
+import GHC.CString (unpackCString#)
 
 import qualified Data.ByteString.Builder.Prim as P
 import qualified Data.ByteString.Builder.Prim.Internal as PI
@@ -43,15 +46,18 @@ data More
   | MoreBuffer {-# UNPACK #-} !Int
   | InsertByteString !S.ByteString
 data BuilderArg = BuilderArg
-  !DataExchange
+  DataExchange
   {-# UNPACK #-} !(Ptr Word8)
   {-# UNPACK #-} !(Ptr Word8)
 
-newtype Builder = Builder
-  ( BuilderArg
-  -> State# RealWorld
-  -> (# Addr#, Addr#, State# RealWorld #)
-  )
+newtype Builder = Builder (BuilderArg -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #))
+type Builder_ = DataExchange -> Addr# -> Addr# -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #)
+
+toBuilder_ :: Builder -> Builder_
+toBuilder_ (Builder f) dex cur end s = f (BuilderArg dex (Ptr cur) (Ptr end)) s
+
+fromBuilder_ :: Builder_ -> Builder
+fromBuilder_ f = Builder $ \(BuilderArg dex (Ptr cur) (Ptr end)) s -> f dex cur end s
 
 newtype Build a = Build (DataExchange -> Ptr Word8 -> Ptr Word8 -> IO (Ptr Word8, Ptr Word8, a))
   deriving (Functor)
@@ -61,9 +67,9 @@ instance Applicative Build where
   (<*>) = ap
 
 instance Monad Build where
-  return x = Build $ \_ cur end -> return (cur, end, x)
+  return x = Build $ oneShot $ \_ -> oneShot $ \cur -> oneShot $ \end -> return (cur, end, x)
   {-# INLINE return #-}
-  Build b >>= f = Build $ \dex cur end -> do
+  Build b >>= f = Build $ oneShot $ \dex -> oneShot $ \cur -> oneShot $ \end -> do
     (cur', end', x) <- b dex cur end
     case f x of
       Build c -> c dex cur' end'
@@ -123,10 +129,20 @@ instance Monoid Builder where
   {-# INLINE mconcat #-}
 
 instance IsString Builder where
-  fromString = primMapListBounded P.charUtf8
+  fromString = builderFromString
+  {-# INLINE fromString #-}
+
+builderFromString :: String -> Builder
+builderFromString = primMapListBounded P.charUtf8
+{-# NOINLINE[0] builderFromString #-}
+
+{-# RULES "FastBuilder: builderFromString/unpackCString#"
+  forall addr.
+    builderFromString (unpackCString# addr) = unsafeCString (Ptr addr)
+  #-}
 
 rebuild :: Builder -> Builder
-rebuild (Builder f) = Builder $ oneShot (\arg s -> f arg s)
+rebuild (Builder f) = Builder $ oneShot (\ !arg s -> f arg s)
 
 toBufferWriter :: Builder -> X.BufferWriter
 toBufferWriter b buf0 sz0 = do
@@ -218,17 +234,31 @@ byteStringInsert bstr = mkBuilder $ do
   io $ putMVar respV $ Response cur $ InsertByteString $ bstr
   handleRequest dex
 
-getBytes :: Int# -> Builder
-getBytes n = mkBuilder $ do
+unsafeCString :: CString -> Builder
+unsafeCString cstr = rebuild $ let
+    !len = fromIntegral $ c_pure_strlen cstr
+  in
+  mappend (ensureBytes len) $ mkBuilder $ do
+  cur <- getCur
+  cur' <- io $ copyBytes cur (castPtr cstr) len
+  setCur $ cur `plusPtr` len
+
+foreign import ccall unsafe "strlen" c_pure_strlen :: CString -> CSize
+
+getBytes :: Int -> Builder
+getBytes (I# n) = fromBuilder_ (getBytes_ n)
+
+getBytes_ :: Int# -> Builder_
+getBytes_ n = toBuilder_ $ mkBuilder $ do
   dex@(Dex _ respV) <- getDex
   cur <- getCur
   io $ putMVar respV $ Response cur $ MoreBuffer $ I# n
   handleRequest dex
-{-# NOINLINE getBytes #-}
+{-# NOINLINE getBytes_ #-}
 
 ensureBytes :: Int -> Builder
-ensureBytes n@(I# n#) = mkBuilder $ do
+ensureBytes !n = mkBuilder $ do
   cur <- getCur
   end <- getEnd
-  when (cur `plusPtr` n >= end) $ runBuilder $ getBytes n#
+  when (cur `plusPtr` n >= end) $ runBuilder $ getBytes n
 {-# INLINE ensureBytes #-}
