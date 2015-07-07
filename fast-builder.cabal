@@ -24,3 +24,11 @@ library
   build-depends:       base >=4.6, bytestring >= 0.10.2.0, ghc-prim
   -- hs-source-dirs:      
   default-language:    Haskell2010
+
+benchmark aeson
+  type:                exitcode-stdio-1.0
+  main-is:             aeson.hs
+  hs-source-dirs:      benchmarks
+  other-modules:       Aeson.Fast, Aeson.Bstr
+  build-depends:       base, fast-builder, aeson, criterion, bytestring, scientific, text, vector, deepseq, unordered-containers, ghc-prim
+  ghc-options:         -fsimpl-tick-factor=120
