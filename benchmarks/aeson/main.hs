@@ -1,9 +1,8 @@
 import qualified Fast as F
 import qualified Bstr as B
-import Control.Applicative
 import Control.DeepSeq
 import Criterion.Main
-import Data.Aeson
+import Data.Aeson (decode', encode)
 import qualified Data.ByteString.Lazy as L
 
 main :: IO ()

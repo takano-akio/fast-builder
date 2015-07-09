@@ -24,6 +24,7 @@ foldMapWithKey f = go
     leaf $(lPat "k" "v")  = f k v
 {-# INLINE foldMapWithKey #-}
 
+foldMapArray :: (Monoid m) => (a -> m) -> $(arrayType) a -> m
 foldMapArray f $(arrayPat "arr") = foldMapArray' f arr
 
 foldMapArray' :: (Monoid m) => (a -> m) -> Array# a -> m

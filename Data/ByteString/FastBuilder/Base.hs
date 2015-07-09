@@ -5,7 +5,6 @@
 
 module Data.ByteString.FastBuilder.Base where
 
-import Control.Applicative
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
 import Control.Monad
@@ -24,9 +23,8 @@ import Foreign.Ptr
 import System.IO.Unsafe
 
 import GHC.Exts (Addr#, State#, RealWorld, Ptr(..), Int(..), Int#)
-import GHC.Exts (realWorld#)
 import GHC.Magic (oneShot)
-import GHC.IO (IO(..), unIO)
+import GHC.IO (IO(..))
 import GHC.CString (unpackCString#)
 
 import qualified Data.ByteString.Builder.Prim as P
@@ -234,7 +232,7 @@ unsafeCString cstr = rebuild $ let
   in
   mappend (ensureBytes len) $ mkBuilder $ do
   cur <- getCur
-  cur' <- io $ copyBytes cur (castPtr cstr) len
+  io $ copyBytes cur (castPtr cstr) len
   setCur $ cur `plusPtr` len
 
 foreign import ccall unsafe "strlen" c_pure_strlen :: CString -> CSize
