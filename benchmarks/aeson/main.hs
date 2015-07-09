@@ -1,5 +1,5 @@
-import qualified Aeson.Fast as F
-import qualified Aeson.Bstr as B
+import qualified Fast as F
+import qualified Bstr as B
 import Control.Applicative
 import Control.DeepSeq
 import Criterion.Main

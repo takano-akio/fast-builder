@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Aeson.NAME
+module NAME
   ( fromValue
   , valueToLazyByteString
   --, fromObjT
@@ -22,6 +22,7 @@ import qualified Data.Vector as V
 import GHC.Magic
 
 import LIB
+import HashMapExts
 
 valueToLazyByteString :: Value -> L.ByteString
 valueToLazyByteString = toLazyByteString . fromValue
@@ -72,17 +73,16 @@ wrap (G f) e = M (f e)
 unwrap :: (e -> M) -> G e
 unwrap f = G $ \e b -> rebuild $ runM (f e) b
 
+fromObject :: Object -> Builder
+fromObject obj = char8 '{' <> foldMapWithKey f obj <> char8 '}'
+  where
+      f k v =
+        fromString k <> char8 ':' <> fromValue v
+        <> char8 ','
 {-
 fromObject :: Object -> Builder
-fromObject obj = runM (H.foldMapWithKey f' obj) True <> "}"
-  where
-    f' k v = M (f k v)
-    f k v initial = rebuild $ \_ ->
-      (if initial then "{" else ",")
-      <> fromString k <> ":" <> fromValue v
--}
-fromObject :: Object -> Builder
 fromObject = fromObjectWith (const $ char8 '}')
+-}
 
 fromObjectWith :: (Bool -> Builder) -> Object -> Builder
 fromObjectWith final = \obj -> H.foldrWithKey f final obj True
