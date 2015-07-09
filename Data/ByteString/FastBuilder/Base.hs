@@ -50,7 +50,7 @@ data BuilderArg = BuilderArg
   {-# UNPACK #-} !(Ptr Word8)
   {-# UNPACK #-} !(Ptr Word8)
 
-newtype Builder = Builder (BuilderArg -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #))
+newtype Builder = Builder { unBuilder :: BuilderArg -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #) }
 type Builder_ = DataExchange -> Addr# -> Addr# -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #)
 
 toBuilder_ :: Builder -> Builder_
@@ -59,71 +59,65 @@ toBuilder_ (Builder f) dex cur end s = f (BuilderArg dex (Ptr cur) (Ptr end)) s
 fromBuilder_ :: Builder_ -> Builder
 fromBuilder_ f = Builder $ \(BuilderArg dex (Ptr cur) (Ptr end)) s -> f dex cur end s
 
-newtype Build a = Build (DataExchange -> Ptr Word8 -> Ptr Word8 -> IO (Ptr Word8, Ptr Word8, a))
+newtype BuildM a = BuildM { runBuildM :: (a -> Builder) -> Builder }
   deriving (Functor)
 
-instance Applicative Build where
+instance Applicative BuildM where
   pure = return
   (<*>) = ap
 
-instance Monad Build where
-  return x = Build $ oneShot $ \_ -> oneShot $ \cur -> oneShot $ \end -> return (cur, end, x)
+instance Monad BuildM where
+  return x = BuildM $ \k -> k x
   {-# INLINE return #-}
-  Build b >>= f = Build $ oneShot $ \dex -> oneShot $ \cur -> oneShot $ \end -> do
-    (cur', end', x) <- b dex cur end
-    case f x of
-      Build c -> c dex cur' end'
+  BuildM b >>= f = BuildM $ \k -> b $ \r -> runBuildM (f r) k
   {-# INLINE (>>=) #-}
 
-runBuild :: DataExchange -> Build a -> IO a
-runBuild dex@(Dex reqV respV) (Build f) = do
+runBuilder :: DataExchange -> Builder -> IO ()
+runBuilder dex@(Dex reqV respV) (Builder f) = do
   Request cur end <- takeMVar reqV
-  (cur', _, x) <- f dex cur end
+  cur' <- IO $ \s -> case f (BuilderArg dex cur end) s of
+    (# cur', _, s' #) -> (# s', Ptr cur' #)
   putMVar respV $ Response cur' NoMore
-  return x
 
-mkBuilder :: Build () -> Builder
-mkBuilder (Build bb) = Builder $ \(BuilderArg dex cur end) s ->
-  let !(# s1, (Ptr cur', Ptr end', _) #) = unIO (bb dex cur end) s
-  in (# cur', end', s1 #)
+mkBuilder :: BuildM () -> Builder
+mkBuilder (BuildM bb) = bb $ \_ -> mempty
 {-# INLINE mkBuilder #-}
 
-runBuilder :: Builder -> Build ()
-runBuilder (Builder b) = Build $ \dex cur end -> IO $ \s ->
-  let !(# cur', end', s1 #) = b (BuilderArg dex cur end) s
-  in (# s1, (Ptr cur', Ptr end', ()) #)
-{-# INLINE runBuilder #-}
+useBuilder :: Builder -> BuildM ()
+useBuilder b = BuildM $ \k -> b <> k ()
+{-# INLINE useBuilder #-}
 
-getDex :: Build DataExchange
-getDex = Build $ \dex cur end -> return (cur, end, dex)
+getDex :: BuildM DataExchange
+getDex = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k dex) (BuilderArg dex cur end) s
 
-getCur :: Build (Ptr Word8)
-getCur = Build $ \_ cur end -> return (cur, end, cur)
+getCur :: BuildM (Ptr Word8)
+getCur = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k cur) (BuilderArg dex cur end) s
 
-getEnd :: Build (Ptr Word8)
-getEnd = Build $ \_ cur end -> return (cur, end, end)
+getEnd :: BuildM (Ptr Word8)
+getEnd = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k end) (BuilderArg dex cur end) s
 
-setCur :: Ptr Word8 -> Build ()
-setCur p = Build $ \_ _ end -> return (p, end, ())
+setCur :: Ptr Word8 -> BuildM ()
+setCur p = BuildM $ \k -> Builder $ \(BuilderArg dex _ end) s -> unBuilder (k ()) (BuilderArg dex p end) s
 
-setEnd :: Ptr Word8 -> Build ()
-setEnd p = Build $ \_ cur _ -> return (cur, p, ())
+setEnd :: Ptr Word8 -> BuildM ()
+setEnd p = BuildM $ \k -> Builder $ \(BuilderArg dex cur _) s -> unBuilder (k ()) (BuilderArg dex cur p) s
 
-io :: IO a -> Build a
-io x = Build $ \_ cur end -> do
-  v <- x
-  return (cur, end, v)
+io :: IO a -> BuildM a
+io (IO x) = BuildM $ \k -> Builder $ \ba s -> case x s of
+  (# s', val #) -> unBuilder (k val) ba s'
 
-handleRequest :: DataExchange -> Build ()
+handleRequest :: DataExchange -> BuildM ()
 handleRequest (Dex reqV _) = do
   Request newCur newEnd <- io $ takeMVar reqV
   setCur newCur
   setEnd newEnd
 
 instance Monoid Builder where
-  mempty = mkBuilder $ return ()
+  mempty = Builder $ \(BuilderArg _ (Ptr cur) (Ptr end)) s -> (# cur, end, s #)
   {-# INLINE mempty #-}
-  mappend x y = mkBuilder $ runBuilder x >> runBuilder y
+  mappend (Builder a) (Builder b) = Builder $ \(BuilderArg dex (Ptr cur) (Ptr end)) s ->
+    case a (BuilderArg dex (Ptr cur) (Ptr end)) s of
+      (# cur', end', s' #) -> b (BuilderArg dex (Ptr cur') (Ptr end')) s'
   {-# INLINE mappend #-}
   mconcat xs = foldr mappend mempty xs
   {-# INLINE mconcat #-}
@@ -164,7 +158,7 @@ newDex :: IO DataExchange
 newDex = Dex <$> newEmptyMVar <*> newEmptyMVar
 
 startBuilderThread :: DataExchange -> Builder -> IO ()
-startBuilderThread dex b = void $ forkIO $ runBuild dex $ runBuilder b
+startBuilderThread dex b = void $ forkIO $ runBuilder dex b
 
 toLazyByteString :: Builder -> L.ByteString
 toLazyByteString = L.fromChunks . makeChunks defaultBufferSize . toBufferWriter
@@ -219,7 +213,7 @@ byteStringThreshold th bstr = rebuild $
 
 byteStringCopy :: S.ByteString -> Builder
 byteStringCopy bstr = mkBuilder $ do
-  runBuilder $ ensureBytes (S.length bstr)
+  useBuilder $ ensureBytes (S.length bstr)
   cur <- getCur
   io $ S.unsafeUseAsCString bstr $ \ptr ->
     copyBytes cur (castPtr ptr) len
@@ -260,5 +254,5 @@ ensureBytes :: Int -> Builder
 ensureBytes !n = mkBuilder $ do
   cur <- getCur
   end <- getEnd
-  when (cur `plusPtr` n >= end) $ runBuilder $ getBytes n
+  when (cur `plusPtr` n >= end) $ useBuilder $ getBytes n
 {-# INLINE ensureBytes #-}
