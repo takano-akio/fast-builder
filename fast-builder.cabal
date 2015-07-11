@@ -34,3 +34,10 @@ benchmark aeson
   build-depends:       base, fast-builder, aeson, criterion, bytestring, scientific, text, vector, deepseq, unordered-containers, ghc-prim, true-name, template-haskell
   ghc-options:         -fsimpl-tick-factor=120
   ghc-options:         -Wall
+
+test-suite prop
+  type:                exitcode-stdio-1.0
+  main-is:             prop.hs
+  hs-source-dirs:      tests
+  build-depends:       base, fast-builder, bytestring, QuickCheck
+  ghc-options:         -Wall -g -rtsopts
