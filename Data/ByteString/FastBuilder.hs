@@ -5,6 +5,7 @@ module Data.ByteString.FastBuilder
   , rebuild
   , toBufferWriter
   , toLazyByteString
+  , toLazyByteStringWith
 
   , byteString
   , byteStringInsert

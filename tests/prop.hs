@@ -20,11 +20,19 @@ data BuilderPrim
   | BP_Empty
   deriving (Show)
 
+data Driver
+  = ToLazyByteString
+  | ToLazyByteStringWith_10
+  deriving (Show, Enum, Bounded)
+
 instance QC.Arbitrary BuilderTree where
-  arbitrary = QC.oneof
-    [ Leaf <$> QC.arbitrary
-    , QC.scale (`div` 2) $ Mappend <$> QC.arbitrary <*> QC.arbitrary
-    ]
+  arbitrary = QC.sized $ \size ->
+    if size == 0
+      then return (Leaf BP_Empty)
+      else QC.oneof
+        [ Leaf <$> QC.arbitrary
+        , QC.scale (`div` 2) $ Mappend <$> QC.arbitrary <*> QC.arbitrary
+        ]
 
 instance QC.Arbitrary BuilderPrim where
   arbitrary = QC.oneof
@@ -34,8 +42,16 @@ instance QC.Arbitrary BuilderPrim where
     , pure BP_Empty
     ]
 
-buildWithBuilder :: BuilderTree -> BS.ByteString
-buildWithBuilder = BSL.toStrict . toLazyByteString . go
+instance QC.Arbitrary Driver where
+  arbitrary = QC.arbitraryBoundedEnum
+
+runBuilder :: Driver -> Builder -> BS.ByteString
+runBuilder ToLazyByteString = BSL.toStrict . toLazyByteString
+runBuilder ToLazyByteStringWith_10 =
+  BSL.toStrict . toLazyByteStringWith 10 (const 10)
+
+buildWithBuilder :: Driver -> BuilderTree -> BS.ByteString
+buildWithBuilder drv = runBuilder drv . go
   where
     go (Leaf p) = prim p
     go (Mappend a b) = go a <> go b
@@ -58,8 +74,8 @@ buildWithList = BS.pack . ($[]) . go
     prim (BP_ByteString bs) = (BS.unpack bs ++)
     prim BP_Empty = id
 
-prop_builderTree :: BuilderTree -> Bool
-prop_builderTree tree = buildWithBuilder tree == buildWithList tree
+prop_builderTree :: Driver -> BuilderTree -> Bool
+prop_builderTree drv tree = buildWithBuilder drv tree == buildWithList tree
 
 return []
 
