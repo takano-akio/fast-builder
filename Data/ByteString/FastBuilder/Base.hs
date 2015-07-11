@@ -159,17 +159,23 @@ startBuilderThread :: DataExchange -> Builder -> IO ()
 startBuilderThread dex b = void $ forkIO $ runBuilder dex b
 
 toLazyByteString :: Builder -> L.ByteString
-toLazyByteString = L.fromChunks . makeChunks defaultBufferSize . toBufferWriter
+toLazyByteString = toLazyByteStringWith 1024 (min 262114 . (*2))
+
+toLazyByteStringWith :: Int -> (Int -> Int) -> Builder -> L.ByteString
+toLazyByteStringWith !initialBufSize nextBufSize =
+  L.fromChunks . makeChunks initialBufSize nextBufSize . toBufferWriter
+
+makeChunks :: Int -> (Int -> Int) -> X.BufferWriter -> [S.ByteString]
+makeChunks !initialBufSize nextBufSize = go initialBufSize
   where
-    defaultBufferSize = 4096
-    makeChunks bufSize w = unsafePerformIO $ do
+    go !bufSize w = unsafePerformIO $ do
       fptr <- S.mallocByteString bufSize
       (written, next) <- withForeignPtr fptr $ \buf -> w buf bufSize
+      let !nextSize = nextBufSize bufSize
       let rest = case next of
             X.Done -> []
-            X.More reqSize w' -> makeChunks (max reqSize defaultBufferSize) w'
-            X.Chunk chunk w' -> chunk : makeChunks bufSize w'
-              -- TODO: shouldn't be throwing away the unused part of the buffer
+            X.More reqSize w' -> go (max reqSize nextSize) w'
+            X.Chunk chunk w' -> chunk : go nextSize w'
       return $ if written == 0
         then rest
         else S.fromForeignPtr fptr 0 written : rest
