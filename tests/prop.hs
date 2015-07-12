@@ -1,8 +1,12 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+import qualified Control.Exception as E
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Monoid
+import Data.Typeable
 import Data.Word
 import qualified Test.QuickCheck as QC
 
@@ -19,11 +23,6 @@ data BuilderPrim
   | BP_ByteString !BS.ByteString
   | BP_Empty
   deriving (Show)
-
-data Driver
-  = ToLazyByteString
-  | ToLazyByteStringWith_10
-  deriving (Show, Enum, Bounded)
 
 instance QC.Arbitrary BuilderTree where
   arbitrary = QC.sized $ \size ->
@@ -42,16 +41,26 @@ instance QC.Arbitrary BuilderPrim where
     , pure BP_Empty
     ]
 
+data Driver
+  = ToLazyByteString
+  | ToLazyByteStringWith_10
+  deriving (Show, Enum, Bounded)
+
 instance QC.Arbitrary Driver where
   arbitrary = QC.arbitraryBoundedEnum
+
+newtype TestException = TextException Int
+  deriving (Show, Eq, Typeable, QC.Arbitrary)
+
+instance E.Exception TestException
 
 runBuilder :: Driver -> Builder -> BS.ByteString
 runBuilder ToLazyByteString = BSL.toStrict . toLazyByteString
 runBuilder ToLazyByteStringWith_10 =
   BSL.toStrict . toLazyByteStringWith 10 (const 10)
 
-buildWithBuilder :: Driver -> BuilderTree -> BS.ByteString
-buildWithBuilder drv = runBuilder drv . go
+mkBuilder :: BuilderTree -> Builder
+mkBuilder = go
   where
     go (Leaf p) = prim p
     go (Mappend a b) = go a <> go b
@@ -60,6 +69,9 @@ buildWithBuilder drv = runBuilder drv . go
     prim (BP_Word64le w) = word64LE w
     prim (BP_ByteString bs) = byteString bs
     prim BP_Empty = mempty
+
+buildWithBuilder :: Driver -> BuilderTree -> BS.ByteString
+buildWithBuilder drv = runBuilder drv . mkBuilder
 
 buildWithList :: BuilderTree -> BS.ByteString
 buildWithList = BS.pack . ($[]) . go
@@ -74,8 +86,28 @@ buildWithList = BS.pack . ($[]) . go
     prim (BP_ByteString bs) = (BS.unpack bs ++)
     prim BP_Empty = id
 
+errorBuilder :: TestException -> Builder
+errorBuilder ex = mempty <> E.throw ex
+{-# NOINLINE errorBuilder #-}
+
+-- | Builder's semantics matches the reference implementation.
 prop_builderTree :: Driver -> BuilderTree -> Bool
 prop_builderTree drv tree = buildWithBuilder drv tree == buildWithList tree
+
+-- | When a Builder throws a synchronous exception, it should come out
+-- unchanged from the driver.
+prop_syncException
+    :: TestException
+    -> Driver
+    -> BuilderTree
+    -> BuilderTree
+    -> QC.Property
+prop_syncException ex drv before after = QC.ioProperty $ do
+  r <- E.try $ E.evaluate bstr
+  return $ r == Left ex
+  where
+    bstr = runBuilder drv $
+      mkBuilder before <> errorBuilder ex <> mkBuilder after
 
 return []
 

@@ -7,6 +7,7 @@ module Data.ByteString.FastBuilder.Base where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar
+import qualified Control.Exception as E
 import Control.Monad
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as S
@@ -38,11 +39,13 @@ data DataExchange = Dex
 data Request
   = Request {-# UNPACK #-} !(Ptr Word8) {-# UNPACK #-} !(Ptr Word8)
 
-data Response = Response {-# UNPACK #-} !(Ptr Word8) !More
-data More
-  = NoMore
-  | MoreBuffer {-# UNPACK #-} !Int
-  | InsertByteString !S.ByteString
+data Response
+  = Error E.SomeException
+      -- ^ synchronous exception was thrown by the builder
+  | Done !(Ptr Word8)
+  | MoreBuffer !(Ptr Word8) !Int
+  | InsertByteString !(Ptr Word8) !S.ByteString
+
 data BuilderArg = BuilderArg
   DataExchange
   {-# UNPACK #-} !(Ptr Word8)
@@ -73,9 +76,11 @@ instance Monad BuildM where
 runBuilder :: DataExchange -> Builder -> IO ()
 runBuilder dex@(Dex reqV respV) (Builder f) = do
   Request cur end <- takeMVar reqV
-  cur' <- IO $ \s -> case f (BuilderArg dex cur end) s of
-    (# cur', _, s' #) -> (# s', Ptr cur' #)
-  putMVar respV $ Response cur' NoMore
+  do
+    cur' <- IO $ \s -> case f (BuilderArg dex cur end) s of
+      (# cur', _, s' #) -> (# s', Ptr cur' #)
+    putMVar respV $ Done cur'
+    `E.catch` \e -> putMVar respV $ Error e
 
 mkBuilder :: BuildM () -> Builder
 mkBuilder (BuildM bb) = bb $ \_ -> mempty
@@ -145,12 +150,14 @@ toBufferWriter b buf0 sz0 = do
     writer dex@(Dex reqV respV) buf sz = do
       putMVar reqV $ Request buf (buf `plusPtr` sz)
       -- TODO: handle async exceptions
-      Response cur more <- takeMVar respV
-      let !written = cur `minusPtr` buf
-      return $ (,) written $ case more of
-        NoMore -> X.Done
-        MoreBuffer k -> X.More k $ writer dex
-        InsertByteString str -> X.Chunk str $ writer dex
+      resp <- takeMVar respV
+      let go cur next = return (written, next)
+            where !written = cur `minusPtr` buf
+      case resp of
+        Error ex -> E.throwIO ex
+        Done cur -> go cur X.Done
+        MoreBuffer cur k -> go cur $ X.More k $ writer dex
+        InsertByteString cur str -> go cur $ X.Chunk str $ writer dex
 
 newDex :: IO DataExchange
 newDex = Dex <$> newEmptyMVar <*> newEmptyMVar
@@ -229,7 +236,7 @@ byteStringInsert :: S.ByteString -> Builder
 byteStringInsert bstr = mkBuilder $ do
   dex@(Dex _ respV) <- getDex
   cur <- getCur
-  io $ putMVar respV $ Response cur $ InsertByteString $ bstr
+  io $ putMVar respV $ InsertByteString cur bstr
   handleRequest dex
 
 unsafeCString :: CString -> Builder
@@ -250,7 +257,7 @@ getBytes_ :: Int# -> Builder_
 getBytes_ n = toBuilder_ $ mkBuilder $ do
   dex@(Dex _ respV) <- getDex
   cur <- getCur
-  io $ putMVar respV $ Response cur $ MoreBuffer $ I# n
+  io $ putMVar respV $ MoreBuffer cur $ I# n
   handleRequest dex
 {-# NOINLINE getBytes_ #-}
 
