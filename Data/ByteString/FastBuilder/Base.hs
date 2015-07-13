@@ -2,10 +2,11 @@
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Data.ByteString.FastBuilder.Base where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIOWithUnmask, myThreadId, ThreadId)
 import Control.Concurrent.MVar
 import qualified Control.Exception as E
 import Control.Monad
@@ -45,6 +46,7 @@ data Response
   | Done !(Ptr Word8)
   | MoreBuffer !(Ptr Word8) !Int
   | InsertByteString !(Ptr Word8) !S.ByteString
+  deriving (Show)
 
 data BuilderArg = BuilderArg
   DataExchange
@@ -73,14 +75,32 @@ instance Monad BuildM where
   BuildM b >>= f = BuildM $ \k -> b $ \r -> runBuildM (f r) k
   {-# INLINE (>>=) #-}
 
-runBuilder :: DataExchange -> Builder -> IO ()
-runBuilder dex@(Dex reqV respV) (Builder f) = do
+data SuspendBuilderException = SuspendBuilderException !(MVar ())
+
+instance Show SuspendBuilderException where
+  show _ = "SuspendBuilderException"
+
+instance E.Exception SuspendBuilderException
+
+runBuilder :: (forall a. IO a -> IO a) -> DataExchange -> Builder -> IO ()
+runBuilder unmask dex@(Dex reqV respV) (Builder f) = do
   Request cur end <- takeMVar reqV
-  do
-    cur' <- IO $ \s -> case f (BuilderArg dex cur end) s of
-      (# cur', _, s' #) -> (# s', Ptr cur' #)
-    putMVar respV $ Done cur'
-    `E.catch` \e -> putMVar respV $ Error e
+  let
+    finalPtr = unsafePerformIO $ IO $ \s ->
+      case f (BuilderArg dex cur end) s of
+        (# cur', _, s' #) -> (# s', Ptr cur' #)
+    {-# NOINLINE finalPtr #-}
+    loop thunk = do
+      -- Pass around `thunk` as an argument, otherwise GHC 7.10.1 inlines it
+      -- despite the NOINLINE pragma.
+      r <- E.try $ unmask $ E.evaluate thunk
+      case r of
+        Right p -> putMVar respV $ Done p
+        Left ex
+          | Just (SuspendBuilderException lock) <- E.fromException ex
+            -> do takeMVar lock; loop thunk
+          | otherwise -> putMVar respV $ Error ex
+  loop finalPtr
 
 mkBuilder :: BuildM () -> Builder
 mkBuilder (BuildM bb) = bb $ \_ -> mempty
@@ -142,28 +162,45 @@ rebuild :: Builder -> Builder
 rebuild (Builder f) = Builder $ oneShot (\ !arg s -> f arg s)
 
 toBufferWriter :: Builder -> X.BufferWriter
-toBufferWriter b buf0 sz0 = do
+toBufferWriter b buf0 sz0 = E.mask_ $ do
   dex <- newDex
-  startBuilderThread dex b
-  writer dex buf0 sz0
+  builderTid <- startBuilderThread dex b
+  writer builderTid dex buf0 sz0
   where
-    writer dex@(Dex reqV respV) buf sz = do
+    writer !builderTid dex@(Dex reqV respV) buf sz = do
       putMVar reqV $ Request buf (buf `plusPtr` sz)
       -- TODO: handle async exceptions
-      resp <- takeMVar respV
-      let go cur next = return (written, next)
+      resp <- wait builderTid respV
+      let go cur next = return(written, next)
             where !written = cur `minusPtr` buf
       case resp of
         Error ex -> E.throwIO ex
         Done cur -> go cur X.Done
-        MoreBuffer cur k -> go cur $ X.More k $ writer dex
-        InsertByteString cur str -> go cur $ X.Chunk str $ writer dex
+        MoreBuffer cur k -> go cur $ X.More k $ writer builderTid dex
+        InsertByteString cur str -> go cur $ X.Chunk str $ writer builderTid dex
+
+    wait !builderTid respV = do
+      r <- E.try $ takeMVar respV
+      case r of
+        Right resp -> return resp
+        Left exn -> do
+          -- exn must be an async exception, because takeMVar throws no
+          -- synchronous exceptions.
+          resumeVar <- newEmptyMVar
+          E.throwTo builderTid $ SuspendBuilderException resumeVar
+          thisTid <- myThreadId
+          E.throwTo thisTid (exn :: E.SomeException)
+
+          -- A thunk containing this computation has been resumed.
+          -- Resume the builder thread, and retry.
+          putMVar resumeVar ()
+          wait builderTid respV
 
 newDex :: IO DataExchange
 newDex = Dex <$> newEmptyMVar <*> newEmptyMVar
 
-startBuilderThread :: DataExchange -> Builder -> IO ()
-startBuilderThread dex b = void $ forkIO $ runBuilder dex b
+startBuilderThread :: DataExchange -> Builder -> IO ThreadId
+startBuilderThread dex b = E.mask_ $ forkIOWithUnmask $ \u -> runBuilder u dex b
 
 toLazyByteString :: Builder -> L.ByteString
 toLazyByteString = toLazyByteStringWith 1024 (min 262114 . (*2))

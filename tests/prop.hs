@@ -2,12 +2,19 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+module Main where
+
+import Control.Concurrent
+import Control.Concurrent.STM
 import qualified Control.Exception as E
+import Control.Monad
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Monoid
 import Data.Typeable
 import Data.Word
+import System.IO.Unsafe
+import System.Timeout
 import qualified Test.QuickCheck as QC
 
 import Data.ByteString.FastBuilder
@@ -90,12 +97,37 @@ errorBuilder :: TestException -> Builder
 errorBuilder ex = mempty <> E.throw ex
 {-# NOINLINE errorBuilder #-}
 
+asyncExnBuilder :: ThreadId -> TestException -> Builder
+asyncExnBuilder tid ex = mempty <> unsafePerformIO act
+  where
+    act = do
+      E.throwTo tid ex
+      return mempty
+{-# NOINLINE asyncExnBuilder #-}
+
+nonterminatingBuilder :: TVar Bool -> Builder
+nonterminatingBuilder inBlock = mempty <> unsafePerformIO act
+  where
+    act = do
+      atomically $ writeTVar inBlock True
+      loop 0
+      `E.finally` atomically (writeTVar inBlock False)
+
+    loop k
+      | k < (0::Integer) = return mempty
+      | otherwise = loop $ k + 1
+{-# NOINLINE nonterminatingBuilder #-}
+
+tryEvaluate :: a -> IO (Either TestException a)
+tryEvaluate = E.try . E.evaluate
+
 -- | Builder's semantics matches the reference implementation.
 prop_builderTree :: Driver -> BuilderTree -> Bool
 prop_builderTree drv tree = buildWithBuilder drv tree == buildWithList tree
 
--- | When a Builder throws a synchronous exception, it should come out
--- unchanged from the driver.
+-- | When a Builder throws a synchronous exception, the exception should come
+-- out unchanged from the driver. Evaluating the result again should repeat
+-- the same exception.
 prop_syncException
     :: TestException
     -> Driver
@@ -103,15 +135,58 @@ prop_syncException
     -> BuilderTree
     -> QC.Property
 prop_syncException ex drv before after = QC.ioProperty $ do
-  r <- E.try $ E.evaluate bstr
-  return $ r == Left ex
+  r <- tryEvaluate bstr
+  r1 <- tryEvaluate bstr
+  return $ (r, r1) == (Left ex, Left ex)
   where
     bstr = runBuilder drv $
       mkBuilder before <> errorBuilder ex <> mkBuilder after
+
+-- | When a Builder is interrupted by an asynchronous exception, the exception
+-- should come out unchanged from the driver. Evaluating the result again
+-- should then succeed.
+prop_asyncException
+    :: TestException
+    -> Driver
+    -> BuilderTree
+    -> BuilderTree
+    -> QC.Property
+prop_asyncException ex drv before after = QC.ioProperty $ do
+  tid <- myThreadId
+  let
+    bstr = runBuilder drv $
+      mkBuilder before <> asyncExnBuilder tid ex <> mkBuilder after
+  r <- tryEvaluate bstr
+  r1 <- tryEvaluate bstr
+  return $ (r, r1) == (Left ex, Right $ buildWithList (Mappend before after))
+
+-- | When a non-terminating Builder is interrupted by an asynchronous exception,
+-- it should be killed, rather than keep running forever.
+prop_asyncExceptionInterrupts
+    :: TestException
+    -> Driver
+    -> BuilderTree
+    -> BuilderTree
+    -> QC.Property
+prop_asyncExceptionInterrupts ex drv before after = QC.ioProperty $ do
+  inNontermV <- newTVarIO False
+  tid <- myThreadId
+  let
+    bstr = runBuilder drv $
+      mkBuilder before <> nonterminatingBuilder inNontermV <> mkBuilder after
+  _ <- forkIO $ do
+    atomically $ guard =<< readTVar inNontermV
+    E.throwTo tid ex
+  r <- tryEvaluate bstr
+  r1 <- timeout 100000 $ atomically $ guard . not =<< readTVar inNontermV
+  return $ (r, r1) == (Left ex, Just ())
 
 return []
 
 main :: IO ()
 main = do
-  True <- $(QC.quickCheckAll)
+  True <- $(QC.forAllProperties) $ \prop -> do
+    r <- QC.quickCheckWithResult QC.stdArgs{ QC.chatty = False } prop
+    print r
+    return r
   return ()
