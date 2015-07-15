@@ -33,9 +33,7 @@ import qualified Data.ByteString.Builder.Prim as P
 import qualified Data.ByteString.Builder.Prim.Internal as PI
 import qualified Data.ByteString.Builder.Extra as X
 
-data DataExchange = Dex
-  {-# UNPACK #-} !(MVar Request)
-  {-# UNPACK #-} !(MVar Response)
+data DataSink = ThreadedSink !(MVar Request) !(MVar Response)
 
 data Request
   = Request {-# UNPACK #-} !(Ptr Word8) {-# UNPACK #-} !(Ptr Word8)
@@ -49,12 +47,12 @@ data Response
   deriving (Show)
 
 data BuilderArg = BuilderArg
-  DataExchange
+  DataSink
   {-# UNPACK #-} !(Ptr Word8)
   {-# UNPACK #-} !(Ptr Word8)
 
 newtype Builder = Builder { unBuilder :: BuilderArg -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #) }
-type Builder_ = DataExchange -> Addr# -> Addr# -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #)
+type Builder_ = DataSink -> Addr# -> Addr# -> State# RealWorld -> (# Addr#, Addr#, State# RealWorld #)
 
 toBuilder_ :: Builder -> Builder_
 toBuilder_ (Builder f) dex cur end s = f (BuilderArg dex (Ptr cur) (Ptr end)) s
@@ -82,8 +80,8 @@ instance Show SuspendBuilderException where
 
 instance E.Exception SuspendBuilderException
 
-runBuilder :: (forall a. IO a -> IO a) -> DataExchange -> Builder -> IO ()
-runBuilder unmask dex@(Dex reqV respV) (Builder f) = do
+runBuilder :: (forall a. IO a -> IO a) -> DataSink -> Builder -> IO ()
+runBuilder unmask dex@(ThreadedSink reqV respV) (Builder f) = do
   Request cur end <- takeMVar reqV
   let
     finalPtr = unsafePerformIO $ IO $ \s ->
@@ -110,7 +108,7 @@ useBuilder :: Builder -> BuildM ()
 useBuilder b = BuildM $ \k -> b <> k ()
 {-# INLINE useBuilder #-}
 
-getDex :: BuildM DataExchange
+getDex :: BuildM DataSink
 getDex = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k dex) (BuilderArg dex cur end) s
 
 getCur :: BuildM (Ptr Word8)
@@ -129,8 +127,8 @@ io :: IO a -> BuildM a
 io (IO x) = BuildM $ \k -> Builder $ \ba s -> case x s of
   (# s', val #) -> unBuilder (k val) ba s'
 
-handleRequest :: DataExchange -> BuildM ()
-handleRequest (Dex reqV _) = do
+handleRequest :: DataSink -> BuildM ()
+handleRequest (ThreadedSink reqV _) = do
   Request newCur newEnd <- io $ takeMVar reqV
   setCur newCur
   setEnd newEnd
@@ -167,7 +165,7 @@ toBufferWriter b buf0 sz0 = E.mask_ $ do
   builderTid <- startBuilderThread dex b
   writer builderTid dex buf0 sz0
   where
-    writer !builderTid dex@(Dex reqV respV) buf sz = do
+    writer !builderTid dex@(ThreadedSink reqV respV) buf sz = do
       putMVar reqV $ Request buf (buf `plusPtr` sz)
       -- TODO: handle async exceptions
       resp <- wait builderTid respV
@@ -196,10 +194,10 @@ toBufferWriter b buf0 sz0 = E.mask_ $ do
           putMVar resumeVar ()
           wait builderTid respV
 
-newDex :: IO DataExchange
-newDex = Dex <$> newEmptyMVar <*> newEmptyMVar
+newDex :: IO DataSink
+newDex = ThreadedSink <$> newEmptyMVar <*> newEmptyMVar
 
-startBuilderThread :: DataExchange -> Builder -> IO ThreadId
+startBuilderThread :: DataSink -> Builder -> IO ThreadId
 startBuilderThread dex b = E.mask_ $ forkIOWithUnmask $ \u -> runBuilder u dex b
 
 toLazyByteString :: Builder -> L.ByteString
@@ -271,7 +269,7 @@ byteStringCopy bstr = mkBuilder $ do
 
 byteStringInsert :: S.ByteString -> Builder
 byteStringInsert bstr = mkBuilder $ do
-  dex@(Dex _ respV) <- getDex
+  dex@(ThreadedSink _ respV) <- getDex
   cur <- getCur
   io $ putMVar respV $ InsertByteString cur bstr
   handleRequest dex
@@ -292,7 +290,7 @@ getBytes (I# n) = fromBuilder_ (getBytes_ n)
 
 getBytes_ :: Int# -> Builder_
 getBytes_ n = toBuilder_ $ mkBuilder $ do
-  dex@(Dex _ respV) <- getDex
+  dex@(ThreadedSink _ respV) <- getDex
   cur <- getCur
   io $ putMVar respV $ MoreBuffer cur $ I# n
   handleRequest dex
