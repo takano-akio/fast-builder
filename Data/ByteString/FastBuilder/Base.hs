@@ -6,20 +6,23 @@
 
 module Data.ByteString.FastBuilder.Base where
 
-import Control.Concurrent (forkIOWithUnmask, myThreadId, ThreadId)
+import Control.Concurrent (forkIOWithUnmask, myThreadId)
 import Control.Concurrent.MVar
 import qualified Control.Exception as E
 import Control.Monad
+import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as S
 import qualified Data.ByteString.Unsafe as S
 import qualified Data.ByteString.Lazy as L
+import Data.IORef
 import Data.Monoid
 import Data.String
 import Data.Word
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.ForeignPtr
+import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal.Utils
 import Foreign.Ptr
 import System.IO.Unsafe
@@ -33,7 +36,9 @@ import qualified Data.ByteString.Builder.Prim as P
 import qualified Data.ByteString.Builder.Prim.Internal as PI
 import qualified Data.ByteString.Builder.Extra as X
 
-data DataSink = ThreadedSink !(MVar Request) !(MVar Response)
+data DataSink
+  = ThreadedSink !(MVar Request) !(MVar Response)
+  | GrowingBuffer !(IORef (ForeignPtr Word8))
 
 data Request
   = Request {-# UNPACK #-} !(Ptr Word8) {-# UNPACK #-} !(Ptr Word8)
@@ -80,13 +85,14 @@ instance Show SuspendBuilderException where
 
 instance E.Exception SuspendBuilderException
 
-runBuilder :: (forall a. IO a -> IO a) -> DataSink -> Builder -> IO ()
-runBuilder unmask dex@(ThreadedSink reqV respV) (Builder f) = do
+runBuilderThreaded
+  :: (forall a. IO a -> IO a) -> MVar Request -> MVar Response -> Builder
+  -> IO ()
+runBuilderThreaded unmask !reqV !respV builder = do
   Request cur end <- takeMVar reqV
   let
-    finalPtr = unsafePerformIO $ IO $ \s ->
-      case f (BuilderArg dex cur end) s of
-        (# cur', _, s' #) -> (# s', Ptr cur' #)
+    finalPtr = unsafePerformIO $
+      runBuilder builder (ThreadedSink reqV respV) cur end
     {-# NOINLINE finalPtr #-}
     loop thunk = do
       -- Pass around `thunk` as an argument, otherwise GHC 7.10.1 inlines it
@@ -100,6 +106,11 @@ runBuilder unmask dex@(ThreadedSink reqV respV) (Builder f) = do
           | otherwise -> putMVar respV $ Error ex
   loop finalPtr
 
+runBuilder :: Builder -> DataSink -> Ptr Word8 -> Ptr Word8 -> IO (Ptr Word8)
+runBuilder (Builder f) sink !cur !end = IO $ \s ->
+  case f (BuilderArg sink cur end) s of
+    (# cur', _, s' #) -> (# s', Ptr cur' #)
+
 mkBuilder :: BuildM () -> Builder
 mkBuilder (BuildM bb) = bb $ \_ -> mempty
 {-# INLINE mkBuilder #-}
@@ -108,8 +119,8 @@ useBuilder :: Builder -> BuildM ()
 useBuilder b = BuildM $ \k -> b <> k ()
 {-# INLINE useBuilder #-}
 
-getDex :: BuildM DataSink
-getDex = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k dex) (BuilderArg dex cur end) s
+getSink :: BuildM DataSink
+getSink = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k dex) (BuilderArg dex cur end) s
 
 getCur :: BuildM (Ptr Word8)
 getCur = BuildM $ \k -> Builder $ \(BuilderArg dex cur end) s -> unBuilder (k cur) (BuilderArg dex cur end) s
@@ -126,12 +137,6 @@ setEnd p = BuildM $ \k -> Builder $ \(BuilderArg dex cur _) s -> unBuilder (k ()
 io :: IO a -> BuildM a
 io (IO x) = BuildM $ \k -> Builder $ \ba s -> case x s of
   (# s', val #) -> unBuilder (k val) ba s'
-
-handleRequest :: DataSink -> BuildM ()
-handleRequest (ThreadedSink reqV _) = do
-  Request newCur newEnd <- io $ takeMVar reqV
-  setCur newCur
-  setEnd newEnd
 
 instance Monoid Builder where
   mempty = Builder $ \(BuilderArg _ (Ptr cur) (Ptr end)) s -> (# cur, end, s #)
@@ -161,11 +166,13 @@ rebuild (Builder f) = Builder $ oneShot (\ !arg s -> f arg s)
 
 toBufferWriter :: Builder -> X.BufferWriter
 toBufferWriter b buf0 sz0 = E.mask_ $ do
-  dex <- newDex
-  builderTid <- startBuilderThread dex b
-  writer builderTid dex buf0 sz0
+  reqV <- newEmptyMVar
+  respV <- newEmptyMVar
+  builderTid <- E.mask_ $ forkIOWithUnmask $ \u ->
+    runBuilderThreaded u reqV respV b
+  writer builderTid reqV respV buf0 sz0
   where
-    writer !builderTid dex@(ThreadedSink reqV respV) buf sz = do
+    writer !builderTid !reqV !respV !buf !sz = do
       putMVar reqV $ Request buf (buf `plusPtr` sz)
       -- TODO: handle async exceptions
       resp <- wait builderTid respV
@@ -174,8 +181,8 @@ toBufferWriter b buf0 sz0 = E.mask_ $ do
       case resp of
         Error ex -> E.throwIO ex
         Done cur -> go cur X.Done
-        MoreBuffer cur k -> go cur $ X.More k $ writer builderTid dex
-        InsertByteString cur str -> go cur $ X.Chunk str $ writer builderTid dex
+        MoreBuffer cur k -> go cur $ X.More k $ writer builderTid reqV respV
+        InsertByteString cur str -> go cur $ X.Chunk str $ writer builderTid reqV respV
 
     wait !builderTid respV = do
       r <- E.try $ takeMVar respV
@@ -194,18 +201,23 @@ toBufferWriter b buf0 sz0 = E.mask_ $ do
           putMVar resumeVar ()
           wait builderTid respV
 
-newDex :: IO DataSink
-newDex = ThreadedSink <$> newEmptyMVar <*> newEmptyMVar
-
-startBuilderThread :: DataSink -> Builder -> IO ThreadId
-startBuilderThread dex b = E.mask_ $ forkIOWithUnmask $ \u -> runBuilder u dex b
-
 toLazyByteString :: Builder -> L.ByteString
 toLazyByteString = toLazyByteStringWith 1024 (min 262114 . (*2))
 
 toLazyByteStringWith :: Int -> (Int -> Int) -> Builder -> L.ByteString
 toLazyByteStringWith !initialBufSize nextBufSize =
   L.fromChunks . makeChunks initialBufSize nextBufSize . toBufferWriter
+
+toStrictByteString :: Builder -> S.ByteString
+toStrictByteString builder = unsafePerformIO $ do
+  let cap = 100
+  fptr <- mallocForeignPtrBytes cap
+  bufferRef <- newIORef fptr
+  let !base = unsafeForeignPtrToPtr fptr
+  cur <- runBuilder builder (GrowingBuffer bufferRef) base (base `plusPtr` cap)
+  endFptr <- readIORef bufferRef
+  let !written = cur `minusPtr` unsafeForeignPtrToPtr endFptr
+  return $ S.fromForeignPtr endFptr 0 written
 
 makeChunks :: Int -> (Int -> Int) -> X.BufferWriter -> [S.ByteString]
 makeChunks !initialBufSize nextBufSize = go initialBufSize
@@ -258,8 +270,12 @@ byteStringThreshold th bstr = rebuild $
     else byteStringCopy bstr
 
 byteStringCopy :: S.ByteString -> Builder
-byteStringCopy bstr = mkBuilder $ do
-  useBuilder $ ensureBytes (S.length bstr)
+byteStringCopy !bstr =
+  -- TODO: this is suboptimal; should keep using the same buffer size.
+  ensureBytes (S.length bstr) <> byteStringCopyNoCheck bstr
+
+byteStringCopyNoCheck :: S.ByteString -> Builder
+byteStringCopyNoCheck !bstr = mkBuilder $ do
   cur <- getCur
   io $ S.unsafeUseAsCString bstr $ \ptr ->
     copyBytes cur (castPtr ptr) len
@@ -268,11 +284,20 @@ byteStringCopy bstr = mkBuilder $ do
     !len = S.length bstr
 
 byteStringInsert :: S.ByteString -> Builder
-byteStringInsert bstr = mkBuilder $ do
-  dex@(ThreadedSink _ respV) <- getDex
-  cur <- getCur
-  io $ putMVar respV $ InsertByteString cur bstr
-  handleRequest dex
+byteStringInsert !bstr = fromBuilder_ $ byteStringInsert_ bstr
+
+byteStringInsert_ :: S.ByteString -> Builder_
+byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
+  sink <- getSink
+  case sink of
+    ThreadedSink reqV respV -> do
+      cur <- getCur
+      io $ putMVar respV $ InsertByteString cur bstr
+      handleRequest reqV
+    GrowingBuffer bufRef -> do
+      growBuffer bufRef (S.length bstr +)
+      useBuilder $ byteStringCopyNoCheck bstr
+{-# NOINLINE byteStringInsert_ #-}
 
 unsafeCString :: CString -> Builder
 unsafeCString cstr = rebuild $ let
@@ -290,10 +315,13 @@ getBytes (I# n) = fromBuilder_ (getBytes_ n)
 
 getBytes_ :: Int# -> Builder_
 getBytes_ n = toBuilder_ $ mkBuilder $ do
-  dex@(ThreadedSink _ respV) <- getDex
-  cur <- getCur
-  io $ putMVar respV $ MoreBuffer cur $ I# n
-  handleRequest dex
+  sink <- getSink
+  case sink of
+    ThreadedSink reqV respV -> do
+      cur <- getCur
+      io $ putMVar respV $ MoreBuffer cur $ I# n
+      handleRequest reqV
+    GrowingBuffer bufRef -> growBuffer bufRef (`shiftL` 1)
 {-# NOINLINE getBytes_ #-}
 
 ensureBytes :: Int -> Builder
@@ -302,3 +330,35 @@ ensureBytes !n = mkBuilder $ do
   end <- getEnd
   when (cur `plusPtr` n >= end) $ useBuilder $ getBytes n
 {-# INLINE ensureBytes #-}
+
+----------------------------------------------------------------
+-- ThreadedSink
+
+handleRequest :: MVar Request -> BuildM ()
+handleRequest reqV = do
+  Request newCur newEnd <- io $ takeMVar reqV
+  setCur newCur
+  setEnd newEnd
+
+----------------------------------------------------------------
+-- GrowingBuffer
+
+growBuffer :: IORef (ForeignPtr Word8) -> (Int -> Int) -> BuildM ()
+growBuffer !bufRef capFn = do
+  cur <- getCur
+  end <- getCur
+  fptr <- io $ readIORef bufRef
+  let !base = unsafeForeignPtrToPtr fptr
+  let !size = cur `minusPtr` base
+  let !cap = end `minusPtr` base
+  let !newCap = capFn cap
+  newFptr <- io $ mallocForeignPtrBytes newCap
+  let !newBase = unsafeForeignPtrToPtr newFptr
+  setCur $ newBase `plusPtr` size
+  setEnd $ newBase `plusPtr` newCap
+  io $ do
+    copyBytes newBase base size
+    touchForeignPtr fptr
+    touchForeignPtr newFptr
+    writeIORef bufRef newFptr
+{-# INLINE growBuffer #-}

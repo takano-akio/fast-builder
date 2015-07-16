@@ -51,6 +51,7 @@ instance QC.Arbitrary BuilderPrim where
 data Driver
   = ToLazyByteString
   | ToLazyByteStringWith_10
+  | ToStrictByteString
   deriving (Show, Enum, Bounded)
 
 instance QC.Arbitrary Driver where
@@ -65,6 +66,7 @@ runBuilder :: Driver -> Builder -> BS.ByteString
 runBuilder ToLazyByteString = BSL.toStrict . toLazyByteString
 runBuilder ToLazyByteStringWith_10 =
   BSL.toStrict . toLazyByteStringWith 10 (const 10)
+runBuilder ToStrictByteString = toStrictByteString
 
 mkBuilder :: BuilderTree -> Builder
 mkBuilder = go

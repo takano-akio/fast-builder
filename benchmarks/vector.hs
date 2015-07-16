@@ -12,12 +12,16 @@ import Control.Concurrent
 main :: IO ()
 main = runInUnboundThread $ vec10 `seq` vec100 `seq` vec1000 `seq` vec10000 `seq` defaultMain
   [ bench "10/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec10
+  : bench "10/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec10
   , bench "10/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec10
   , bench "100/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec100
+  , bench "100/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec100
   , bench "100/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec100
   , bench "1000/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec1000
+  , bench "1000/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec1000
   , bench "1000/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec1000
   , bench "10000/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec10000
+  , bench "10000/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec10000
   , bench "10000/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec10000
   ]
 
