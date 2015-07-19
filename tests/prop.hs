@@ -68,7 +68,7 @@ instance E.Exception TestException
 runBuilder :: Driver -> Builder -> BS.ByteString
 runBuilder ToLazyByteString = BSL.toStrict . toLazyByteString
 runBuilder ToLazyByteStringWith_10 =
-  BSL.toStrict . toLazyByteStringWith 10 (const 10)
+  BSL.toStrict . toLazyByteStringWith 10 10
 runBuilder ToStrictByteString = toStrictByteString
 runBuilder HPutBuilder = \b -> unsafePerformIO $ do
   (readH, writeH) <- Process.createPipe
