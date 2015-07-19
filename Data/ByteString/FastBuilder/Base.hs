@@ -168,21 +168,24 @@ toBufferWriter :: Builder -> X.BufferWriter
 toBufferWriter b buf0 sz0 = E.mask_ $ do
   reqV <- newEmptyMVar
   respV <- newEmptyMVar
-  builderTid <- E.mask_ $ forkIOWithUnmask $ \u ->
-    runBuilderThreaded u reqV respV b
-  writer builderTid reqV respV buf0 sz0
+  writer Nothing reqV respV buf0 sz0
   where
-    writer !builderTid !reqV !respV !buf !sz = do
+    writer !maybeBuilderTid !reqV !respV !buf !sz = do
       putMVar reqV $ Request buf (buf `plusPtr` sz)
-      -- TODO: handle async exceptions
+      -- Fork after putMVar, in order to minimize the chance that
+      -- the new thread is scheduled on a different CPU.
+      builderTid <- case maybeBuilderTid of
+        Just t -> return t
+        Nothing -> forkIOWithUnmask $ \u ->
+          runBuilderThreaded u reqV respV b
       resp <- wait builderTid respV
       let go cur next = return(written, next)
             where !written = cur `minusPtr` buf
       case resp of
         Error ex -> E.throwIO ex
         Done cur -> go cur X.Done
-        MoreBuffer cur k -> go cur $ X.More k $ writer builderTid reqV respV
-        InsertByteString cur str -> go cur $ X.Chunk str $ writer builderTid reqV respV
+        MoreBuffer cur k -> go cur $ X.More k $ writer (Just builderTid) reqV respV
+        InsertByteString cur str -> go cur $ X.Chunk str $ writer (Just builderTid) reqV respV
 
     wait !builderTid respV = do
       r <- E.try $ takeMVar respV
