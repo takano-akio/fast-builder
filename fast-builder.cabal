@@ -40,7 +40,7 @@ benchmark vector
   main-is:             vector.hs
   hs-source-dirs:      benchmarks
   build-depends:       base, fast-builder, criterion, bytestring, vector, deepseq
-  ghc-options:         -Wall -threaded -g -rtsopts
+  ghc-options:         -Wall -threaded -g -rtsopts -eventlog
 
 test-suite prop
   type:                exitcode-stdio-1.0
