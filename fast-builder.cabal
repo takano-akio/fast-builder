@@ -46,5 +46,5 @@ test-suite prop
   type:                exitcode-stdio-1.0
   main-is:             prop.hs
   hs-source-dirs:      tests
-  build-depends:       base, fast-builder, bytestring, QuickCheck, stm
+  build-depends:       base, fast-builder, bytestring, QuickCheck, stm, process
   ghc-options:         -Wall -g -rtsopts

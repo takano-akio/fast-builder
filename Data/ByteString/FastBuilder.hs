@@ -7,6 +7,7 @@ module Data.ByteString.FastBuilder
   , toLazyByteString
   , toLazyByteStringWith
   , toStrictByteString
+  , hPutBuilder
 
   , byteString
   , byteStringInsert

@@ -25,6 +25,7 @@ import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
 import Foreign.Marshal.Utils
 import Foreign.Ptr
+import qualified System.IO as IO
 import System.IO.Unsafe
 
 import GHC.Exts (Addr#, State#, RealWorld, Ptr(..), Int(..), Int#)
@@ -39,6 +40,9 @@ import qualified Data.ByteString.Builder.Extra as X
 data DataSink
   = ThreadedSink !(MVar Request) !(MVar Response)
   | GrowingBuffer !(IORef (ForeignPtr Word8))
+  | HandleSink !IO.Handle !(IORef Queue)
+
+data Queue = Queue !(ForeignPtr Word8) !Int{-start-}
 
 data Request
   = Request {-# UNPACK #-} !(Ptr Word8) {-# UNPACK #-} !(Ptr Word8)
@@ -222,6 +226,15 @@ toStrictByteString builder = unsafePerformIO $ do
   let !written = cur `minusPtr` unsafeForeignPtrToPtr endFptr
   return $ S.fromForeignPtr endFptr 0 written
 
+hPutBuilder :: IO.Handle -> Builder -> IO ()
+hPutBuilder !h builder = do
+  let cap = 100
+  fptr <- mallocForeignPtrBytes cap
+  qRef <- newIORef $ Queue fptr 0
+  let !base = unsafeForeignPtrToPtr fptr
+  cur <- runBuilder builder (HandleSink h qRef) base (base `plusPtr` cap)
+  flushQueue h qRef cur
+
 makeChunks :: Int -> (Int -> Int) -> X.BufferWriter -> [S.ByteString]
 makeChunks !initialBufSize nextBufSize = go initialBufSize
   where
@@ -233,6 +246,7 @@ makeChunks !initialBufSize nextBufSize = go initialBufSize
             X.Done -> []
             X.More reqSize w' -> go (max reqSize nextSize) w'
             X.Chunk chunk w' -> chunk : go nextSize w'
+              -- TODO: don't throw away the remaining part of the buffer
       return $ if written == 0
         then rest
         else S.fromForeignPtr fptr 0 written : rest
@@ -300,6 +314,10 @@ byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
     GrowingBuffer bufRef -> do
       growBuffer bufRef (S.length bstr +)
       useBuilder $ byteStringCopyNoCheck bstr
+    HandleSink h queueRef -> do
+      cur <- getCur
+      io $ flushQueue h queueRef cur
+      io $ S.hPut h bstr
 {-# NOINLINE byteStringInsert_ #-}
 
 unsafeCString :: CString -> Builder
@@ -325,6 +343,10 @@ getBytes_ n = toBuilder_ $ mkBuilder $ do
       io $ putMVar respV $ MoreBuffer cur $ I# n
       handleRequest reqV
     GrowingBuffer bufRef -> growBuffer bufRef (`shiftL` 1)
+    HandleSink h queueRef -> do
+      cur <- getCur
+      io $ flushQueue h queueRef cur
+      emptyQueue queueRef $ max 4096 (I# n)
 {-# NOINLINE getBytes_ #-}
 
 ensureBytes :: Int -> Builder
@@ -365,3 +387,28 @@ growBuffer !bufRef capFn = do
     touchForeignPtr newFptr
     writeIORef bufRef newFptr
 {-# INLINE growBuffer #-}
+
+----------------------------------------------------------------
+-- HandleSink
+
+flushQueue :: IO.Handle -> IORef Queue -> Ptr Word8 -> IO ()
+flushQueue !h !qRef !cur = do
+  Queue fptr start <- readIORef qRef
+  let !end = cur `minusPtr` unsafeForeignPtrToPtr fptr
+  when (end > start) $ do
+    S.hPut h $ S.fromForeignPtr fptr start (end - start)
+    writeIORef qRef $ Queue fptr end
+
+emptyQueue :: IORef Queue -> Int -> BuildM ()
+emptyQueue !qRef !minSize = do
+  end <- getCur
+  Queue fptr _ <- io $ readIORef qRef
+  let !base = unsafeForeignPtrToPtr fptr
+  let !cap = end `minusPtr` base
+  newFptr <- if minSize <= cap
+    then return fptr
+    else io $ mallocForeignPtrBytes minSize
+  let !newBase = unsafeForeignPtrToPtr newFptr
+  io $ writeIORef qRef $ Queue newFptr 0
+  setCur newBase
+  setEnd $ newBase `plusPtr` max minSize cap

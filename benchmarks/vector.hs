@@ -4,26 +4,37 @@ import Criterion.Main
 import Data.Monoid
 import qualified Data.Vector.Unboxed as U
 import Data.Word
+import qualified System.IO as IO
 
 import qualified Data.ByteString.Builder as Bstr
 import qualified Data.ByteString.FastBuilder as Fast
 import Control.Concurrent
 
 main :: IO ()
-main = runInUnboundThread $ vec10 `seq` vec100 `seq` vec1000 `seq` vec10000 `seq` defaultMain
-  [ bench "10/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec10
-  , bench "10/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec10
-  , bench "10/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec10
-  , bench "100/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec100
-  , bench "100/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec100
-  , bench "100/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec100
-  , bench "1000/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec1000
-  , bench "1000/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec1000
-  , bench "1000/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec1000
-  , bench "10000/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec10000
-  , bench "10000/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec10000
-  , bench "10000/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec10000
-  ]
+main = runInUnboundThread $ do
+  h <- IO.openFile "/dev/null" IO.WriteMode
+  vec10 `seq` vec100 `seq` vec1000 `seq` vec10000 `seq` defaultMain
+    [ bench "10/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec10
+    , bench "10/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec10
+    , bench "10/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec10
+    , bench "10/io/fast" $ whnfIO $ Fast.hPutBuilder h $ fastVector vec10
+    , bench "10/io/bstr" $ whnfIO $ Bstr.hPutBuilder h $ bstrVector vec10
+    , bench "100/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec100
+    , bench "100/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec100
+    , bench "100/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec100
+    , bench "100/io/fast" $ whnfIO $ Fast.hPutBuilder h $ fastVector vec100
+    , bench "100/io/bstr" $ whnfIO $ Bstr.hPutBuilder h $ bstrVector vec100
+    , bench "1000/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec1000
+    , bench "1000/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec1000
+    , bench "1000/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec1000
+    , bench "1000/io/fast" $ whnfIO $ Fast.hPutBuilder h $ fastVector vec1000
+    , bench "1000/io/bstr" $ whnfIO $ Bstr.hPutBuilder h $ bstrVector vec1000
+    , bench "10000/lazy/fast" $ nf (Fast.toLazyByteString . fastVector) vec10000
+    , bench "10000/lazy/bstr" $ nf (Bstr.toLazyByteString . bstrVector) vec10000
+    , bench "10000/strict/fast" $ nf (Fast.toStrictByteString . fastVector) vec10000
+    , bench "10000/io/fast" $ whnfIO $ Fast.hPutBuilder h $ fastVector vec10000
+    , bench "10000/io/bstr" $ whnfIO $ Bstr.hPutBuilder h $ bstrVector vec10000
+    ]
 
 type Item = (Bool, Word32)
 

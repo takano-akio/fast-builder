@@ -13,7 +13,9 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Monoid
 import Data.Typeable
 import Data.Word
+import qualified System.IO as IO
 import System.IO.Unsafe
+import qualified System.Process as Process
 import System.Timeout
 import qualified Test.QuickCheck as QC
 
@@ -52,6 +54,7 @@ data Driver
   = ToLazyByteString
   | ToLazyByteStringWith_10
   | ToStrictByteString
+  | HPutBuilder
   deriving (Show, Enum, Bounded)
 
 instance QC.Arbitrary Driver where
@@ -67,6 +70,11 @@ runBuilder ToLazyByteString = BSL.toStrict . toLazyByteString
 runBuilder ToLazyByteStringWith_10 =
   BSL.toStrict . toLazyByteStringWith 10 (const 10)
 runBuilder ToStrictByteString = toStrictByteString
+runBuilder HPutBuilder = \b -> unsafePerformIO $ do
+  (readH, writeH) <- Process.createPipe
+  hPutBuilder writeH b
+  IO.hClose writeH
+  BS.hGetContents readH
 
 mkBuilder :: BuilderTree -> Builder
 mkBuilder = go
