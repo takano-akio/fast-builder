@@ -354,6 +354,8 @@ byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
         BoundedGrowingBuffer fptr bound -> do
           -- TODO: don't grow if bstr fits in the current buffer
           growBufferBounded dRef fptr bound (S.length bstr)
+          -- TODO: insert rather than copy if the first chunk
+          -- is full.
           useBuilder $ byteStringCopyNoCheck bstr
     GrowingBuffer bufRef -> do
       -- TODO: don't grow if bstr fits in the current buffer
