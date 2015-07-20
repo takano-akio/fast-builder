@@ -407,7 +407,7 @@ ensureBytes :: Int -> Builder
 ensureBytes !n = mkBuilder $ do
   cur <- getCur
   end <- getEnd
-  when (cur `plusPtr` n > end) $ useBuilder $ getBytes n
+  when (end `minusPtr` cur < n) $ useBuilder $ getBytes n
 {-# INLINE ensureBytes #-}
 
 ----------------------------------------------------------------
