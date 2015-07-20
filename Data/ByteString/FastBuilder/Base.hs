@@ -44,7 +44,7 @@ data DataSink
 
 data DynamicSink
   = ThreadedSink !(MVar Request) !(MVar Response)
-  | BoundedGrowingBuffer !(ForeignPtr Word8) !Int{-bound-}
+  | BoundedGrowingBuffer {-# UNPACK #-} !(ForeignPtr Word8) !Int{-bound-}
 
 data Queue = Queue !(ForeignPtr Word8) !Int{-start-}
 
@@ -204,16 +204,18 @@ toBufferWriter !reqV !respV thunk buf0 sz0 = E.mask_ $ do
           wait builderTid
 
 toLazyByteString :: Builder -> L.ByteString
-toLazyByteString = toLazyByteStringWith 1024 262114
+toLazyByteString = toLazyByteStringWith 100 32768
 
--- TODO: why is this slower than toStrictByteString for small builders?
 toLazyByteStringWith :: Int -> Int -> Builder -> L.ByteString
 toLazyByteStringWith !initialSize !maxSize builder = unsafePerformIO $ do
   fptr <- mallocForeignPtrBytes initialSize
   sink <- newIORef $ BoundedGrowingBuffer fptr maxSize
   let !base = unsafeForeignPtrToPtr fptr
   let
-    finalPtr = unsafePerformIO $
+    finalPtr = unsafeDupablePerformIO $
+      -- The use of unsafeDupablePerformIO is safe here, because at any given
+      -- time, at most one thread can be attempting to evaluate this finalPtr
+      -- thunk.
       runBuilder builder (DynamicSink sink) base (base `plusPtr` initialSize)
     {-# NOINLINE finalPtr #-}
 
@@ -251,7 +253,7 @@ continueBuilderThreaded
   :: MVar Request -> MVar Response -> Int -> Int -> Ptr Word8
   -> [S.ByteString]
 continueBuilderThreaded !reqV !respV !initialSize !maxSize thunk =
-  makeChunks initialSize maxSize $ toBufferWriter reqV respV thunk
+  makeChunks (max maxSize initialSize) maxSize $ toBufferWriter reqV respV thunk
 
 toStrictByteString :: Builder -> S.ByteString
 toStrictByteString builder = unsafePerformIO $ do
@@ -405,7 +407,7 @@ ensureBytes :: Int -> Builder
 ensureBytes !n = mkBuilder $ do
   cur <- getCur
   end <- getEnd
-  when (cur `plusPtr` n >= end) $ useBuilder $ getBytes n
+  when (cur `plusPtr` n > end) $ useBuilder $ getBytes n
 {-# INLINE ensureBytes #-}
 
 ----------------------------------------------------------------
