@@ -353,14 +353,16 @@ byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
           io $ putMVar respV $ InsertByteString cur bstr
           handleRequest reqV
         BoundedGrowingBuffer fptr bound -> do
-          -- TODO: don't grow if bstr fits in the current buffer
-          growBufferBounded dRef fptr bound (S.length bstr)
+          r <- remainingBytes
+          when (r < S.length bstr) $
+            growBufferBounded dRef fptr bound (S.length bstr)
           -- TODO: insert rather than copy if the first chunk
           -- is full.
           useBuilder $ byteStringCopyNoCheck bstr
     GrowingBuffer bufRef -> do
-      -- TODO: don't grow if bstr fits in the current buffer
-      growBuffer bufRef (S.length bstr)
+      r <- remainingBytes
+      when (r < S.length bstr) $
+        growBuffer bufRef (S.length bstr)
       useBuilder $ byteStringCopyNoCheck bstr
     HandleSink h queueRef -> do
       cur <- getCur
@@ -404,10 +406,13 @@ getBytes_ n = toBuilder_ $ mkBuilder $ do
 
 ensureBytes :: Int -> Builder
 ensureBytes !n = mkBuilder $ do
-  cur <- getCur
-  end <- getEnd
-  when (end `minusPtr` cur < n) $ useBuilder $ getBytes n
+  r <- remainingBytes
+  when (r < n) $ useBuilder $ getBytes n
 {-# INLINE ensureBytes #-}
+
+remainingBytes :: BuildM Int
+remainingBytes = minusPtr <$> getEnd <*> getCur
+{-# INLINE remainingBytes #-}
 
 ----------------------------------------------------------------
 -- ThreadedSink
