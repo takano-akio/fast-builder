@@ -10,7 +10,6 @@ import Control.Concurrent (forkIOWithUnmask, myThreadId)
 import Control.Concurrent.MVar
 import qualified Control.Exception as E
 import Control.Monad
-import Data.Bits
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Internal as S
 import qualified Data.ByteString.Unsafe as S
@@ -361,7 +360,7 @@ byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
           useBuilder $ byteStringCopyNoCheck bstr
     GrowingBuffer bufRef -> do
       -- TODO: don't grow if bstr fits in the current buffer
-      growBuffer bufRef (S.length bstr +)
+      growBuffer bufRef (S.length bstr)
       useBuilder $ byteStringCopyNoCheck bstr
     HandleSink h queueRef -> do
       cur <- getCur
@@ -396,7 +395,7 @@ getBytes_ n = toBuilder_ $ mkBuilder $ do
           handleRequest reqV
         BoundedGrowingBuffer fptr bound ->
           growBufferBounded dRef fptr bound (I# n)
-    GrowingBuffer bufRef -> growBuffer bufRef (`shiftL` 1) -- TODO: check n
+    GrowingBuffer bufRef -> growBuffer bufRef (I# n)
     HandleSink h queueRef -> do
       cur <- getCur
       io $ flushQueue h queueRef cur
@@ -422,15 +421,15 @@ handleRequest reqV = do
 ----------------------------------------------------------------
 -- GrowingBuffer
 
-growBuffer :: IORef (ForeignPtr Word8) -> (Int -> Int) -> BuildM ()
-growBuffer !bufRef capFn = do
+growBuffer :: IORef (ForeignPtr Word8) -> Int -> BuildM ()
+growBuffer !bufRef !req = do
   cur <- getCur
   end <- getCur
   fptr <- io $ readIORef bufRef
   let !base = unsafeForeignPtrToPtr fptr
   let !size = cur `minusPtr` base
   let !cap = end `minusPtr` base
-  let !newCap = capFn cap
+  let !newCap = cap + max cap req
   newFptr <- io $ mallocForeignPtrBytes newCap
   let !newBase = unsafeForeignPtrToPtr newFptr
   setCur $ newBase `plusPtr` size
