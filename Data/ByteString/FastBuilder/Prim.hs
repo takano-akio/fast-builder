@@ -1,4 +1,6 @@
 {-# LANGUAGE CPP #-}
+
+-- | This is an internal module; its interface is unstable.
 module Data.ByteString.FastBuilder.Prim where
 
 import qualified Data.ByteString.Builder.Prim as P

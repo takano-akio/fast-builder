@@ -1,35 +1,60 @@
+-- | An efficient implementation of ByteString builder.
+--
+-- In many cases, this module works as a drop-in replacement for
+-- Data.ByteString.Builder, and should improve speed. However, one caveat
+-- applies: when using 'toLazyByteString', if you consume the result
+-- in a bound thread, performance degrades significantly. See the
+-- documentation for 'toLazyByteString' for details.
+--
+-- Sometimes performance can be greatly improved by inserting calls to
+-- 'rebuild' to your program. See the documentation for 'rebuild' for
+-- details.
 module Data.ByteString.FastBuilder
-  ( Builder
-  , primBounded
-  , primFixed
-  , rebuild
-  , toBufferWriter
+  (
+  -- * The type
+
+  Builder
+
+  -- * Running a builder
   , toLazyByteString
   , toLazyByteStringWith
   , toStrictByteString
   , hPutBuilder
 
+  -- * Performance tuning
+  , rebuild
+
+  -- * Basic builders
+  , primBounded
+  , primFixed
   , byteString
   , byteStringInsert
   , byteStringCopy
   , byteStringThreshold
 
+  -- * Single byte
   , int8
+  , word8
+
+  -- * Little endian
   , int16LE
-  , int16BE
   , int32LE
-  , int32BE
   , int64LE
+
+  , word16LE
+  , word32LE
+  , word64LE
+
+  -- * Big endian
+  , int16BE
+  , int32BE
   , int64BE
 
-  , word8
-  , word16LE
   , word16BE
-  , word32LE
   , word32BE
-  , word64LE
   , word64BE
 
+  -- * Decimal
   , intDec
   , int8Dec
   , int16Dec
@@ -42,17 +67,20 @@ module Data.ByteString.FastBuilder
   , word32Dec
   , word64Dec
 
-  , char7
-  , string7
+  , integerDec
+  , doubleDec
 
-  , char8
-  , string8
-
+  -- * UTF-8
   , charUtf8
   , stringUtf8
 
-  , integerDec
-  , doubleDec
+  -- * ASCII
+  , char7
+  , string7
+
+  -- * ISO-8859-1
+  , char8
+  , string8
   ) where
 
 import Data.ByteString.FastBuilder.Base
