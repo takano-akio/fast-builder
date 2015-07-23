@@ -83,5 +83,5 @@ module Data.ByteString.FastBuilder
   , string8
   ) where
 
-import Data.ByteString.FastBuilder.Base
-import Data.ByteString.FastBuilder.Prim
+import Data.ByteString.FastBuilder.Internal
+import Data.ByteString.FastBuilder.Internal.Prim

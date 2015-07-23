@@ -5,7 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 -- | This is an internal module; its interface is unstable.
-module Data.ByteString.FastBuilder.Base
+module Data.ByteString.FastBuilder.Internal
   (
   -- * Builder and related types
     Builder(..)

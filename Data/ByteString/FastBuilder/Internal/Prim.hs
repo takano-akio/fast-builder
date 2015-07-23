@@ -1,10 +1,10 @@
 {-# LANGUAGE CPP #-}
 
 -- | This is an internal module; its interface is unstable.
-module Data.ByteString.FastBuilder.Prim where
+module Data.ByteString.FastBuilder.Internal.Prim where
 
+import Data.ByteString.FastBuilder.Internal
 import qualified Data.ByteString.Builder.Prim as P
-import Data.ByteString.FastBuilder.Base
 import Data.Int
 import Data.Word
 

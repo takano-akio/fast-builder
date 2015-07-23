@@ -18,8 +18,9 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Data.ByteString.FastBuilder,
-                       Data.ByteString.FastBuilder.Base,
-                       Data.ByteString.FastBuilder.Prim
+                       Data.ByteString.FastBuilder.Internal
+  other-modules:       Data.ByteString.FastBuilder.Internal.Prim
+
   -- other-extensions:    
   build-depends:       base >=4.6, bytestring >= 0.10.2.0, ghc-prim
   -- hs-source-dirs:      
