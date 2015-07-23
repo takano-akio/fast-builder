@@ -45,6 +45,9 @@ module Data.ByteString.FastBuilder
   , word32LE
   , word64LE
 
+  , floatLE
+  , doubleLE
+
   -- * Big endian
   , int16BE
   , int32BE
@@ -53,6 +56,23 @@ module Data.ByteString.FastBuilder
   , word16BE
   , word32BE
   , word64BE
+
+  , floatBE
+  , doubleBE
+
+  -- * Host-dependent size and byte order, non-portable
+  , intHost
+  , int16Host
+  , int32Host
+  , int64Host
+
+  , wordHost
+  , word16Host
+  , word32Host
+  , word64Host
+
+  , floatHost
+  , doubleHost
 
   -- * Decimal
   , intDec
@@ -68,7 +88,29 @@ module Data.ByteString.FastBuilder
   , word64Dec
 
   , integerDec
+  , floatDec
   , doubleDec
+
+  -- * Hexadecimal
+  , wordHex
+  , word8Hex
+  , word16Hex
+  , word32Hex
+  , word64Hex
+
+  -- * Fixed-width hexadecimal
+  , int8HexFixed
+  , int16HexFixed
+  , int32HexFixed
+  , int64HexFixed
+
+  , word8HexFixed
+  , word16HexFixed
+  , word32HexFixed
+  , word64HexFixed
+
+  , floatHexFixed
+  , doubleHexFixed
 
   -- * UTF-8
   , charUtf8
