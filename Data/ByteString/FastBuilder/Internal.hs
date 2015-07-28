@@ -463,7 +463,8 @@ builderFromString = primMapListBounded P.charUtf8
 
 -- | Turn a value of type @a@ into a 'Builder', using the given 'PI.BoundedPrim'.
 primBounded :: PI.BoundedPrim a -> a -> Builder
-primBounded prim !x = mappend (ensureBytes $ PI.sizeBound prim) $ mkBuilder $ do
+primBounded prim x = rebuild $ seq x $ mkBuilder $ do
+  useBuilder $ ensureBytes $ PI.sizeBound prim
   cur <- getCur
   cur' <- io $ PI.runB prim x cur
   setCur cur'
