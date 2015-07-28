@@ -43,6 +43,13 @@ benchmark vector
   build-depends:       base, fast-builder, criterion, bytestring, vector, deepseq
   ghc-options:         -Wall -threaded -g -rtsopts -eventlog
 
+benchmark map
+  type:                exitcode-stdio-1.0
+  main-is:             map.hs
+  hs-source-dirs:      benchmarks
+  build-depends:       base, fast-builder, criterion, bytestring, containers, deepseq
+  ghc-options:         -Wall -threaded -g -rtsopts -eventlog
+
 test-suite prop
   type:                exitcode-stdio-1.0
   main-is:             prop.hs
