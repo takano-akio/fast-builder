@@ -142,6 +142,7 @@ data DynamicSink
 
 -- | A mutable buffer. The 'Int' specifies where the data start.
 data Queue = Queue !(ForeignPtr Word8) !Int{-start-}
+  -- TODO: this is not really needed
 
 -- | A request from the driver thread to the builder thread.
 data Request
