@@ -650,7 +650,7 @@ remainingBytes = minusPtr <$> getEnd <*> getCur
 
 -- | @'rebuild' b@ is equivalent to @b@, but it allows GHC to assume
 -- that @b@ will be run at most once. This can enable various
--- optimizations that greately improves performance.
+-- optimizations that greately improve performance.
 --
 -- There are two types of typical situations where a use of 'rebuild'
 -- is often a win:
