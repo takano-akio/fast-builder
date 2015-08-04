@@ -3,14 +3,12 @@ import Control.Concurrent
 import Criterion.Main
 import qualified Data.IntMap as IM
 import Data.Monoid
-import qualified System.IO as IO
 
 import qualified Data.ByteString.Builder as Bstr
 import qualified Data.ByteString.FastBuilder as Fast
 
 main :: IO ()
 main = runInUnboundThread $ do
-  h <- IO.openFile "/dev/null" IO.WriteMode
   let
     size sz m = bgroup sz
       [ bench "lazy/fast" $ nf (Fast.toLazyByteString . fastMap) m
