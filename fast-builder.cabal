@@ -31,8 +31,10 @@ benchmark aeson
   type:                exitcode-stdio-1.0
   main-is:             main.hs
   hs-source-dirs:      benchmarks/aeson
-  other-modules:       Fast, Bstr, HashMapExts, HashMapNames
-  build-depends:       base, fast-builder, aeson, criterion, bytestring, scientific, text, vector, deepseq, unordered-containers, ghc-prim, true-name, template-haskell
+  other-modules:       Fast, Bstr, HashMapExts
+  build-depends:       base, fast-builder, aeson, criterion, bytestring,
+    scientific, text, vector, deepseq, unordered-containers, ghc-prim,
+    template-haskell, true-name >= 0.1.0.0
   ghc-options:         -fsimpl-tick-factor=120
   ghc-options:         -Wall -threaded -g -rtsopts
 

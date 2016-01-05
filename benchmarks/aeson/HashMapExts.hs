@@ -4,28 +4,27 @@
 {-# LANGUAGE UnboxedTuples #-}
 module HashMapExts where
 
-import qualified Data.HashMap.Strict as H
+import Data.HashMap.Strict (HashMap)
 import Data.Monoid
 import GHC.Exts (Array#, sizeofArray#, indexArray#, Int(..))
-import Unsafe.TrueName (quasiName)
+import Unsafe.TrueName (truename)
 
-import HashMapNames
-
-foldMapWithKey :: (Monoid m) => (k -> a -> m) -> H.HashMap k a -> m
+foldMapWithKey :: (Monoid m) => (k -> a -> m) -> HashMap k a -> m
 foldMapWithKey f = go
   where
     go hm = case hm of
-      [quasiName|Empty ''H.HashMap|] -> mempty
-      [quasiName|BitmapIndexed ''H.HashMap _ ary|] -> foldMapArray go ary
-      [quasiName|Full ''H.HashMap ary|] -> foldMapArray go ary
-      [quasiName|Collision ''H.HashMap _ ary|] -> foldMapArray leaf ary
-      [quasiName|Leaf ''H.HashMap _ l|] -> leaf l
+      [truename| ''HashMap Empty |] -> mempty
+      [truename| ''HashMap BitmapIndexed | _ ary |] -> foldMapArray go ary
+      [truename| ''HashMap Full | ary |] -> foldMapArray go ary
+      [truename| ''HashMap Collision | _ ary |] -> foldMapArray leaf ary
+      [truename| ''HashMap Leaf | _ l |] -> leaf l
 
-    leaf $(lPat "k" "v")  = f k v
+    leaf [truename| ''HashMap Leaf Leaf L | k v|]  = f k v
 {-# INLINE foldMapWithKey #-}
 
-foldMapArray :: (Monoid m) => (a -> m) -> $(arrayType) a -> m
-foldMapArray f $(arrayPat "arr") = foldMapArray' f arr
+foldMapArray :: (Monoid m) =>
+    (a -> m) -> [truename| ''HashMap Full Array |] a -> m
+foldMapArray f [truename| ''HashMap Full Array Array | a |] = foldMapArray' f a
 
 foldMapArray' :: (Monoid m) => (a -> m) -> Array# a -> m
 foldMapArray' f arr = go 0
