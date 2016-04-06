@@ -110,7 +110,10 @@ data BuilderState = BuilderState
 instance Monoid Builder where
   mempty = Builder $ \_ bs -> bs
   {-# INLINE mempty #-}
-  mappend (Builder a) (Builder b) = oneShotBuilder $
+  mappend (Builder a) (Builder b) = rebuild $
+      -- This rebuild means we basically give up on write/write rewrites.
+      -- However this can make a big difference in some cases, and seems
+      -- important enough. TODO: get rid of it once GHC 8.0 is out.
     Builder $ \dex bs -> b dex (a dex bs)
   {-# INLINE mappend #-}
   mconcat xs = foldr mappend mempty xs
