@@ -14,6 +14,7 @@ maintainer:          aljee@hyper.cx
 category:            Data
 build-type:          Simple
 extra-source-files:  benchmarks/aeson/*.hs
+                     benchmarks/aeson/*.json
 cabal-version:       >=1.10
 tested-with:         GHC >= 7.10.1 && < 8
 
