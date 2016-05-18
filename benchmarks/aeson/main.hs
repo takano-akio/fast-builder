@@ -8,7 +8,7 @@ import qualified Data.ByteString.Lazy as L
 
 main :: IO ()
 main = runInUnboundThread $ do
-  Just json <- decode' <$> L.readFile "../aeson/benchmarks/json-data/twitter100.json"
+  Just json <- decode' <$> L.readFile "benchmarks/aeson/twitter100-mangled.json"
   rnf json `seq` return ()
   defaultMain
     [ bench "fast" $ nf F.valueToLazyByteString json
