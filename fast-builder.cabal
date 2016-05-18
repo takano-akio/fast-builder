@@ -9,7 +9,7 @@ homepage:            http://github.com/takano-akio/fast-builder
 license:             PublicDomain
 license-file:        LICENSE
 author:              Takano Akio
-maintainer:          aljee@hyper.cx
+maintainer:          tak@anoak.io
 -- copyright:
 category:            Data
 build-type:          Simple
