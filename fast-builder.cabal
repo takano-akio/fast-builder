@@ -16,7 +16,7 @@ build-type:          Simple
 extra-source-files:  benchmarks/aeson/*.hs
                      benchmarks/aeson/*.json
 cabal-version:       >=1.10
-tested-with:         GHC >= 7.10.1 && < 8
+tested-with:         GHC >= 7.10.1 && < 8.1
 
 library
   exposed-modules:     Data.ByteString.FastBuilder,
