@@ -1,14 +1,68 @@
 -- | An efficient implementation of ByteString builder.
 --
 -- In many cases, this module works as a drop-in replacement for
--- Data.ByteString.Builder, and should improve speed. However, one caveat
--- applies: when using 'toLazyByteString', if you consume the result
+-- Data.ByteString.Builder, and should improve speed.
+--
+-- = Performance tips
+--
+-- fast-builder should be faster than the standard builder in most situations.
+-- However, by following certain code patterns, you can often achive even
+-- more efficient code, with almost no memory allocation aside from the
+-- resulting 'ByteString' itself. The below are a list of hints for writing
+-- efficient code for constructing builders.
+--
+-- == Return builders directly from your function
+--
+-- Once you construct a builder, it's usually a good idea to just return it from
+-- your function. Avoid storing it in a data structure or passing it to another
+-- function, unless they are going to be eliminated by the compiler.
+-- Schematically, prefer this:
+--
+-- @
+-- good :: YourDataStructure -> Builder
+-- good d = serializeThis (this d) <> serializeThat (that d)
+-- @
+--
+-- over:
+--
+-- @
+-- bad0 :: YourDataStructure -> (Int, Builder)
+-- bad0 d
+--    = (compute d, serializeThis (this d) <> serializeThat (that d))
+-- @
+--
+-- or:
+--
+-- @
+-- bad1 :: YourDataStructure -> Builder
+-- bad1 d = serializeMore d (serializeThis (this d))
+-- @
+--
+-- An important special case of this general rule is to prefer foldr over
+-- foldl' when serializing a list, and to prefer structural recursion over
+-- tail recursion in general.
+--
+-- === Use 'rebuild'
+--
+-- When your function returns a different builder depending on the input,
+-- it's usually a good idea to use 'rebuild' to wrap the whole body of your
+-- function.  See the documentation for 'rebuild' for details.
+--
+-- === Background
+--
+-- Why is it good to return builders directly? It is because they are
+-- implemented as functions. When storing a function in a data structure or
+-- passing it around, you need to first allocate a closure for it. However,
+-- if you are just returning it, the returned function can be merged with your
+-- function, creating a function with a larger arity. For example, GHC can
+-- compile the @good@ function above into a 5-ary function, which requires
+-- no runtime allocation (the exact arity depends on the library version).
+--
+-- == Watch out for lazy ByteString generation
+--
+-- When using 'toLazyByteString', if you consume the result
 -- in a bound thread, performance degrades significantly. See the
 -- documentation for 'toLazyByteString' for details.
---
--- Sometimes performance can be greatly improved by inserting calls to
--- 'rebuild' to your program. See the documentation for 'rebuild' for
--- details.
 module Data.ByteString.FastBuilder
   (
   -- * The type
