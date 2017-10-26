@@ -39,6 +39,7 @@ module Data.ByteString.FastBuilder.Internal
   , toLazyByteStringWith
   , toStrictByteString
   , hPutBuilder
+  , hPutBuilderCapacity
 
   -- * Basic builders
   , primBounded
@@ -467,8 +468,14 @@ toStrictByteString builder = unsafePerformIO $ do
 
 -- | Output a 'Builder' to a 'IO.Handle'.
 hPutBuilder :: IO.Handle -> Builder -> IO ()
-hPutBuilder !h builder = do
-  let cap = 100
+hPutBuilder !h builder = hPutBuilderCapacity h 100 builder
+
+-- | Output a 'Builder' to a 'IO.Handle'.
+-- Allows to set initial capacity. This method may be useful for
+-- setting large buffer when high throughput I/O is needed.
+hPutBuilderCapacity :: IO.Handle -> Int -> Builder -> IO ()
+hPutBuilderCapacity !h capacity builder = do
+  let cap = capacity
   fptr <- mallocForeignPtrBytes cap
   qRef <- newIORef $ Queue fptr 0
   let !base = unsafeForeignPtrToPtr fptr
