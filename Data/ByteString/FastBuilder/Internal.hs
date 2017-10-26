@@ -51,6 +51,7 @@ module Data.ByteString.FastBuilder.Internal
   , byteStringCopyNoCheck
   , byteStringInsert
   , unsafeCString
+  , unsafeCStringLen
   , ensureBytes
   , getBytes
 
@@ -609,6 +610,13 @@ unsafeCString cstr = rebuild $ let
   setCur $ cur `plusPtr` len
 
 foreign import ccall unsafe "strlen" c_pure_strlen :: CString -> CSize
+
+-- | Turn a 'CStringLen' into a 'Builder'.
+unsafeCStringLen :: CStringLen -> Builder
+unsafeCStringLen (ptr, len) = mappend (ensureBytes len) $ mkBuilder $ do
+  cur <- getCur
+  io $ copyBytes cur (castPtr ptr) len
+  setCur $ cur `plusPtr` len
 
 -- | @'ensureBytes' n@ ensures that at least @n@ bytes of free space is
 -- available in the current buffer, by allocating a new buffer when
