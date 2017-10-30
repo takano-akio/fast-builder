@@ -39,7 +39,7 @@ module Data.ByteString.FastBuilder.Internal
   , toLazyByteStringWith
   , toStrictByteString
   , hPutBuilder
-  , hPutBuilderCapacity
+  , hPutBuilderWith
 
   -- * Basic builders
   , primBounded
@@ -131,7 +131,7 @@ data DataSink
     -- ^ The destination of data changes while the builder is running.
   | GrowingBuffer !(IORef (ForeignPtr Word8))
     -- ^ Bytes are accumulated in a contiguous buffer.
-  | HandleSink !IO.Handle !(IORef Queue)
+  | HandleSink !IO.Handle !Int{-next buffer size-} !(IORef Queue)
     -- ^ Bytes are first accumulated in the 'Queue', then flushed to the
     -- 'IO.Handle'.
 
@@ -468,18 +468,18 @@ toStrictByteString builder = unsafePerformIO $ do
 
 -- | Output a 'Builder' to a 'IO.Handle'.
 hPutBuilder :: IO.Handle -> Builder -> IO ()
-hPutBuilder !h builder = hPutBuilderCapacity h 100 builder
+hPutBuilder !h builder = hPutBuilderWith h 100 4096 builder
 
--- | Output a 'Builder' to a 'IO.Handle'.
--- Allows to set initial capacity. This method may be useful for
+-- | Like 'hPutBuffer', but allows the user to specify the initial
+-- and the subsequent desired buffer sizes. This function may be useful for
 -- setting large buffer when high throughput I/O is needed.
-hPutBuilderCapacity :: IO.Handle -> Int -> Builder -> IO ()
-hPutBuilderCapacity !h capacity builder = do
-  let cap = capacity
-  fptr <- mallocForeignPtrBytes cap
+hPutBuilderWith :: IO.Handle -> Int -> Int -> Builder -> IO ()
+hPutBuilderWith !h !initialCap !nextCap builder = do
+  fptr <- mallocForeignPtrBytes initialCap
   qRef <- newIORef $ Queue fptr 0
   let !base = unsafeForeignPtrToPtr fptr
-  cur <- runBuilder builder (HandleSink h qRef) base (base `plusPtr` cap)
+  cur <- runBuilder builder (HandleSink h nextCap qRef)
+    base (base `plusPtr` initialCap)
   flushQueue h qRef cur
 
 ----------------------------------------------------------------
@@ -598,7 +598,7 @@ byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
       when (r < S.length bstr) $
         growBuffer bufRef (S.length bstr)
       useBuilder $ byteStringCopyNoCheck bstr
-    HandleSink h queueRef -> do
+    HandleSink h _nextCap queueRef -> do
       cur <- getCur
       io $ flushQueue h queueRef cur
       io $ S.hPut h bstr
@@ -645,10 +645,10 @@ getBytes_ n = toBuilder_ $ mkBuilder $ do
         BoundedGrowingBuffer fptr bound ->
           growBufferBounded dRef fptr bound (I# n)
     GrowingBuffer bufRef -> growBuffer bufRef (I# n)
-    HandleSink h queueRef -> do
+    HandleSink h nextCap queueRef -> do
       cur <- getCur
       io $ flushQueue h queueRef cur
-      switchQueue queueRef $ max 4096 (I# n)
+      switchQueue queueRef $ max nextCap (I# n)
 {-# NOINLINE getBytes_ #-}
 
 -- | Return the remaining size of the current buffer, in bytes.
