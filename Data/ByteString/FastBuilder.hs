@@ -74,6 +74,7 @@ module Data.ByteString.FastBuilder
   , toLazyByteStringWith
   , toStrictByteString
   , hPutBuilder
+  , hPutBuilderWith
 
   -- * Performance tuning
   , rebuild
