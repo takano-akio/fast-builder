@@ -618,7 +618,8 @@ unsafeCString cstr = rebuild $ let
 
 foreign import ccall unsafe "strlen" c_pure_strlen :: CString -> CSize
 
--- | Turn a 'CStringLen' into a 'Builder'.
+-- | Turn a 'CStringLen' into a 'Builder'. The behavior is undefined if the
+-- given 'CStringLen' does not point to a constant memory block.
 unsafeCStringLen :: CStringLen -> Builder
 unsafeCStringLen (ptr, len) = mappend (ensureBytes len) $ mkBuilder $ do
   cur <- getCur
