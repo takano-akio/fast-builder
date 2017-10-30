@@ -20,7 +20,8 @@ tested-with:         GHC >= 7.10.1 && < 8.1
 
 library
   exposed-modules:     Data.ByteString.FastBuilder,
-                       Data.ByteString.FastBuilder.Internal
+                       Data.ByteString.FastBuilder.Internal,
+                       Data.ByteString.FastBuilder.Unsafe
   other-modules:       Data.ByteString.FastBuilder.Internal.Prim
 
   -- other-extensions:
