@@ -610,11 +610,7 @@ byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
 unsafeCString :: CString -> Builder
 unsafeCString cstr = rebuild $ let
     !len = fromIntegral $ c_pure_strlen cstr
-  in
-  mappend (ensureBytes len) $ mkBuilder $ do
-  cur <- getCur
-  io $ copyBytes cur (castPtr cstr) len
-  setCur $ cur `plusPtr` len
+  in unsafeCStringLen (cstr, len)
 
 foreign import ccall unsafe "strlen" c_pure_strlen :: CString -> CSize
 
