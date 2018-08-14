@@ -6,7 +6,7 @@ module HashMapExts where
 
 import Data.HashMap.Strict (HashMap)
 import Data.Monoid
-import GHC.Exts (Array#, sizeofArray#, indexArray#, Int(..))
+import GHC.Exts (SmallArray#, sizeofSmallArray#, indexSmallArray#, Int(..))
 import Unsafe.TrueName (truename)
 
 foldMapWithKey :: (Monoid m) => (k -> a -> m) -> HashMap k a -> m
@@ -26,11 +26,11 @@ foldMapArray :: (Monoid m) =>
     (a -> m) -> [truename| ''HashMap Full Array |] a -> m
 foldMapArray f [truename| ''HashMap Full Array Array | a |] = foldMapArray' f a
 
-foldMapArray' :: (Monoid m) => (a -> m) -> Array# a -> m
+foldMapArray' :: (Monoid m) => (a -> m) -> SmallArray# a -> m
 foldMapArray' f arr = go 0
   where
     go k@(I# k#)
-      | k >= I# (sizeofArray# arr) = mempty
-      | otherwise = case indexArray# arr k# of
+      | k >= I# (sizeofSmallArray# arr) = mempty
+      | otherwise = case indexSmallArray# arr k# of
         (# v #) -> f v <> go (k + 1)
 {-# INLINE foldMapArray' #-}
