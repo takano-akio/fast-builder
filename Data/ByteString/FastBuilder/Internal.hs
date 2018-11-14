@@ -3,6 +3,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE CPP #-}
 
 -- | This is an internal module; its interface is unstable.
 module Data.ByteString.FastBuilder.Internal
@@ -69,7 +70,9 @@ import qualified Data.ByteString.Internal as S
 import qualified Data.ByteString.Unsafe as S
 import qualified Data.ByteString.Lazy as L
 import Data.IORef
-import Data.Monoid
+#if !MIN_VERSION_base(4,12,0)
+import Data.Semigroup
+#endif
 import Data.String
 import Data.Word
 import Foreign.C.String
@@ -109,14 +112,21 @@ data BuilderState = BuilderState
   !(Ptr Word8) -- "end" pointer
   (State# RealWorld)
 
+instance Semigroup Builder where
+  Builder a <> Builder b = Builder $ \dex bs -> b dex (a dex bs)
+  {-# INLINE (<>) #-}
+
 instance Monoid Builder where
   mempty = Builder $ \_ bs -> bs
   {-# INLINE mempty #-}
-  mappend (Builder a) (Builder b) = rebuild $
+#if __GLASGOW_HASKELL__ >= 800
+  mappend = (<>)
+#else
+  mappend a b = rebuild $ a <> b
       -- This rebuild means we basically give up on write/write rewrites.
       -- However this can make a big difference in some cases, and seems
       -- important enough. TODO: get rid of it once GHC 8.0 is out.
-    Builder $ \dex bs -> b dex (a dex bs)
+#endif
   {-# INLINE mappend #-}
   mconcat xs = foldr mappend mempty xs
   {-# INLINE mconcat #-}
@@ -284,9 +294,13 @@ updateState f = BuildM $ \k -> Builder $ \sink bs ->
 -- is sufficient for each 'Write'.
 data Write = Write !Int (BuilderState -> BuilderState)
 
+instance Semigroup Write where
+  Write s0 w0 <> Write s1 w1 = Write (s0 + s1) (w1 . w0)
+
 instance Monoid Write where
   mempty = Write 0 id
-  mappend (Write s0 w0) (Write s1 w1) = Write (s0 + s1) (w1 . w0)
+  mappend = (<>)
+  {-# INLINE mappend #-}
 
 -- | Turn a 'PI.BoundedPrim' into a 'Write'.
 writeBoundedPrim :: PI.BoundedPrim a -> a -> Write
