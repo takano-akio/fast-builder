@@ -520,7 +520,7 @@ write' (Write size w) = unBuilder $ rebuild $ mkBuilder $ do
 
 {-# RULES "fast-builder: write/write"
   forall w0 w1 sink s.
-    write' w0 sink (write' w1 sink s) = write' (w0 <> w1) sink s
+    write' w0 sink (write' w1 sink s) = write' (w1 <> w0) sink s
   #-}
 
 -- | Turn a value of type @a@ into a 'Builder', using the given 'PI.FixedPrim'.

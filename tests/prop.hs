@@ -191,6 +191,11 @@ prop_asyncExceptionInterrupts ex drv before after = QC.ioProperty $ do
   r1 <- timeout 100000 $ atomically $ guard . not =<< readTVar inNontermV
   return $ (r, r1) == (Left ex, Just ())
 
+-- | Write/write optimization does not break semantics.
+prop_writeWrite :: Word8 -> Word8 -> Bool
+prop_writeWrite w0 w1
+  = toStrictByteString (word8 w0 <> word8 w1) == BS.pack [w0, w1]
+
 return []
 
 main :: IO ()
