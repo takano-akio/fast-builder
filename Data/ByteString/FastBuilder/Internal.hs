@@ -108,8 +108,18 @@ newtype Builder = Builder
 type BuilderState = (# Addr#, Addr#, State# RealWorld #)
 
 instance Sem.Semigroup Builder where
-  Builder a <> Builder b = rebuild $ Builder $ \dex bs -> b dex (a dex bs)
+  (<>) = appendBuilder
   {-# INLINE (<>) #-}
+
+appendBuilder :: Builder -> Builder -> Builder
+appendBuilder (Builder a) (Builder b)
+  = rebuild $ Builder $ \dex bs -> b dex (a dex bs)
+{-# INLINE[1] appendBuilder #-}
+
+{-# RULES "appendBuilder/assoc"
+  forall x y z.
+    appendBuilder (appendBuilder x y) z = appendBuilder x (appendBuilder y z)
+  #-}
 
 instance Monoid Builder where
   mempty = Builder $ \_ bs -> bs
@@ -487,24 +497,25 @@ primBounded prim x = write $ writeBoundedPrim prim x
 
 -- | Turn a 'Write' into a 'Builder'.
 write :: Write -> Builder
-write w = oneShotBuilder $ Builder $ \sink s -> write' w sink s
-{-# INLINE write #-}
-
--- | 'write' as a state transformer. Used for RULES.
-write' :: Write -> DataSink -> BuilderState_ -> BuilderState_
-write' (Write size w) = unBuilder $ rebuild $ mkBuilder $ do
+write (Write size w) = rebuild $ mkBuilder $ do
   useBuilder $ ensureBytes size
   updateState w
-{-# INLINE[0] write' #-}
+{-# INLINE[1] write #-}
 
 {-# RULES "fast-builder: write/write"
-  forall w0 w1 sink s.
-    write' w0 sink (write' w1 sink s) = write' (w1 <> w0) sink s
+  forall w0 w1.
+    appendBuilder (write w0) (write w1) = write (w0 <> w1)
+  #-}
+
+{-# RULES "fast-builder: write/write/x"
+  forall w0 w1 x.
+    appendBuilder (write w0) (appendBuilder (write w1) x)
+      = appendBuilder (write (w0 <> w1)) x
   #-}
 
 -- | Turn a value of type @a@ into a 'Builder', using the given 'PI.FixedPrim'.
 primFixed :: PI.FixedPrim a -> a -> Builder
-primFixed prim x = primBounded (PI.toB prim) x
+primFixed prim = \x -> primBounded (PI.toB prim) x
 {-# INLINE primFixed #-}
 
 -- | Turn a list of values of type @a@ into a 'Builder', using the given
@@ -662,10 +673,6 @@ remainingBytes = minusPtr <$> getEnd <*> getCur
 rebuild :: Builder -> Builder
 rebuild (Builder f) = Builder $ oneShot $ \dex -> oneShot $
   \(# cur, end, s #) -> f dex (# cur, end, s #)
-
--- | Tell GHC that the builder will be only used once.
-oneShotBuilder :: Builder -> Builder
-oneShotBuilder (Builder f) = Builder $ oneShot $ \dex -> oneShot (\s -> f dex s)
 
 ----------------------------------------------------------------
 -- ThreadedSink
