@@ -10,7 +10,7 @@ module Data.ByteString.FastBuilder.Internal
   (
   -- * Builder and related types
     Builder(..)
-  , BuilderState(..)
+  , BuilderState
   , DataSink(..)
   , DynamicSink(..)
   , Queue(..)
@@ -22,10 +22,7 @@ module Data.ByteString.FastBuilder.Internal
   , ChunkOverflowException(..)
 
   -- * Builder building blocks
-  , Builder_
   , BuildM(..)
-  , toBuilder_
-  , fromBuilder_
   , mkBuilder
   , useBuilder
   , getSink
@@ -103,12 +100,12 @@ newtype Builder = Builder
   -- the next location to put bytes to, and "end" points to the end of the
   -- buffer.
 
--- | This datatype exists only to work around the limitation that 'oneShot'
--- cannot work with unboxed argument types.
-data BuilderState = BuilderState
-  !(Ptr Word8) -- "cur" pointer
-  !(Ptr Word8) -- "end" pointer
-  (State# RealWorld)
+-- | The state of a builder. The components are:
+--
+-- * The "cur" pointer
+-- * The "end" pointer
+-- * The state token
+type BuilderState = (# Addr#, Addr#, State# RealWorld #)
 
 instance Sem.Semigroup Builder where
   Builder a <> Builder b = rebuild $ Builder $ \dex bs -> b dex (a dex bs)
@@ -201,24 +198,6 @@ instance E.Exception SuspendBuilderException
 ----------------------------------------------------------------
 -- Builder building blocks
 
--- | An internal type that is isomorphic to 'Builder'. This is a
--- maximaly efficient representation for NOINLINE functions.
-type Builder_
-  = DataSink -> Addr# -> Addr# -> State# RealWorld
-  -> (# Addr#, Addr#, State# RealWorld #)
-
--- | Convert a 'Builder' into a 'Builder_'.
-toBuilder_ :: Builder -> Builder_
-toBuilder_ (Builder f) dex cur end s =
-  case f dex (BuilderState (Ptr cur) (Ptr end) s) of
-    BuilderState (Ptr cur') (Ptr end') s' -> (# cur', end', s' #)
-
--- | Convert a 'Builder_' into a 'Builder'.
-fromBuilder_ :: Builder_ -> Builder
-fromBuilder_ f = Builder $ \dex (BuilderState (Ptr cur) (Ptr end) s) ->
-  case f dex cur end s of
-    (# cur', end', s' #) -> BuilderState (Ptr cur') (Ptr end') s'
-
 -- | An internal type for making it easier to define builders. A value of
 -- @'BuildM' a@ can do everything a 'Builder' can do, and in addition,
 -- returns a value of type @a@ upon completion.
@@ -247,33 +226,33 @@ useBuilder b = BuildM $ \k -> b <> k ()
 
 -- | Get the 'DataSink'.
 getSink :: BuildM DataSink
-getSink = BuildM $ \k -> Builder $ \dex (BuilderState cur end s) ->
-  unBuilder (k dex) dex (BuilderState cur end s)
+getSink = BuildM $ \k -> Builder $ \dex (# cur, end, s #) ->
+  unBuilder (k dex) dex (# cur, end, s #)
 
 -- | Get the current pointer.
 getCur :: BuildM (Ptr Word8)
-getCur = BuildM $ \k -> Builder $ \dex (BuilderState cur end s) ->
-  unBuilder (k cur) dex (BuilderState cur end s)
+getCur = BuildM $ \k -> Builder $ \dex (# cur, end, s #) ->
+  unBuilder (k (Ptr cur)) dex (# cur, end, s #)
 
 -- | Get the end-of-buffer pointer.
 getEnd :: BuildM (Ptr Word8)
-getEnd = BuildM $ \k -> Builder $ \dex (BuilderState cur end s) ->
-  unBuilder (k end) dex (BuilderState cur end s)
+getEnd = BuildM $ \k -> Builder $ \dex (# cur, end, s #) ->
+  unBuilder (k (Ptr end)) dex (# cur, end, s #)
 
 -- | Set the current pointer.
 setCur :: Ptr Word8 -> BuildM ()
-setCur p = BuildM $ \k -> Builder $ \dex (BuilderState _ end s) ->
-  unBuilder (k ()) dex (BuilderState p end s)
+setCur (Ptr p) = BuildM $ \k -> Builder $ \dex (# _, end, s #) ->
+  unBuilder (k ()) dex (# p, end, s #)
 
 -- | Set the end-of-buffer pointer.
 setEnd :: Ptr Word8 -> BuildM ()
-setEnd p = BuildM $ \k -> Builder $ \dex (BuilderState cur _ s) ->
-  unBuilder (k ()) dex (BuilderState cur p s)
+setEnd (Ptr p) = BuildM $ \k -> Builder $ \dex (# cur, _, s #) ->
+  unBuilder (k ()) dex (# cur, p, s #)
 
 -- | Perform IO.
 io :: IO a -> BuildM a
-io (IO x) = BuildM $ \k -> Builder $ \dex (BuilderState cur end s) -> case x s of
-  (# s', val #) -> unBuilder (k val) dex (BuilderState cur end s')
+io (IO x) = BuildM $ \k -> Builder $ \dex (# cur, end, s #) -> case x s of
+  (# s', val #) -> unBuilder (k val) dex (# cur, end, s' #)
 
 -- | Embed a 'BuilderState' transformer into `BuildM`.
 updateState :: (BuilderState -> BuilderState) -> BuildM ()
@@ -286,19 +265,19 @@ updateState f = BuildM $ \k -> Builder $ \sink bs ->
 data Write = Write !Int (BuilderState -> BuilderState)
 
 instance Sem.Semigroup Write where
-  Write s0 w0 <> Write s1 w1 = Write (s0 + s1) (w1 . w0)
+  Write s0 w0 <> Write s1 w1 = Write (s0 + s1) (\s -> w1 (w0 s))
 
 instance Monoid Write where
-  mempty = Write 0 id
+  mempty = Write 0 (\s -> s)
   mappend = (<>)
   {-# INLINE mappend #-}
 
 -- | Turn a 'PI.BoundedPrim' into a 'Write'.
 writeBoundedPrim :: PI.BoundedPrim a -> a -> Write
 writeBoundedPrim prim x =
-  Write (PI.sizeBound prim) $ \(BuilderState cur end s) ->
-    case unIO (PI.runB prim x cur) s of
-      (# s', cur' #) -> BuilderState cur' end s'
+  Write (PI.sizeBound prim) $ \(# cur, end, s #) ->
+    case unIO (PI.runB prim x (Ptr cur)) s of
+      (# s', Ptr cur' #) -> (# cur', end, s' #)
 
 ----------------------------------------------------------------
 --
@@ -306,9 +285,9 @@ writeBoundedPrim prim x =
 
 -- | Run a builder.
 runBuilder :: Builder -> DataSink -> Ptr Word8 -> Ptr Word8 -> IO (Ptr Word8)
-runBuilder (Builder f) sink !cur !end = IO $ \s ->
-  case f sink (BuilderState cur end s) of
-    BuilderState cur' _ s' -> (# s', cur' #)
+runBuilder (Builder f) sink (Ptr cur) (Ptr end) = IO $ \s ->
+  case f sink (# cur, end, s #) of
+    (# cur', _, s' #) -> (# s', Ptr cur' #)
 
 -- | Turn a 'Builder' into a lazy 'L.ByteString'.
 --
@@ -512,7 +491,7 @@ write w = oneShotBuilder $ Builder $ \sink s -> write' w sink s
 {-# INLINE write #-}
 
 -- | 'write' as a state transformer. Used for RULES.
-write' :: Write -> DataSink -> BuilderState -> BuilderState
+write' :: Write -> DataSink -> BuilderState_ -> BuilderState_
 write' (Write size w) = unBuilder $ rebuild $ mkBuilder $ do
   useBuilder $ ensureBytes size
   updateState w
@@ -578,11 +557,11 @@ byteStringCopyNoCheck !bstr = mkBuilder $ do
 -- 'S.ByteString' will not be copied, and inserted directly into the output
 -- instead.
 byteStringInsert :: S.ByteString -> Builder
-byteStringInsert !bstr = fromBuilder_ $ byteStringInsert_ bstr
+byteStringInsert !bstr = byteStringInsert_ bstr
 
 -- | The body of the 'byteStringInsert', worker-wrappered manually.
-byteStringInsert_ :: S.ByteString -> Builder_
-byteStringInsert_ bstr = toBuilder_ $ mkBuilder $ do
+byteStringInsert_ :: S.ByteString -> Builder
+byteStringInsert_ bstr = mkBuilder $ do
   sink <- getSink
   case sink of
     DynamicSink dRef -> do
@@ -638,11 +617,11 @@ ensureBytes !n = mkBuilder $ do
 
 -- | @'getBytes' n@ allocates a new buffer, containing at least @n@ bytes.
 getBytes :: Int -> Builder
-getBytes (I# n) = fromBuilder_ (getBytes_ n)
+getBytes (I# n) = getBytes_ n
 
 -- | The body of the 'getBytes' function, worker-wrappered manually.
-getBytes_ :: Int# -> Builder_
-getBytes_ n = toBuilder_ $ mkBuilder $ do
+getBytes_ :: Int# -> Builder
+getBytes_ n = mkBuilder $ do
   sink <- getSink
   case sink of
     DynamicSink dRef -> do
@@ -682,11 +661,11 @@ remainingBytes = minusPtr <$> getEnd <*> getCur
 --  @rebuild $ case x of ... @
 rebuild :: Builder -> Builder
 rebuild (Builder f) = Builder $ oneShot $ \dex -> oneShot $
-  \(BuilderState cur end s) -> f dex (BuilderState cur end s)
+  \(# cur, end, s #) -> f dex (# cur, end, s #)
 
 -- | Tell GHC that the builder will be only used once.
 oneShotBuilder :: Builder -> Builder
-oneShotBuilder (Builder f) = Builder $ oneShot $ \dex -> oneShot $ \s -> f dex s
+oneShotBuilder (Builder f) = Builder $ oneShot $ \dex -> oneShot (\s -> f dex s)
 
 ----------------------------------------------------------------
 -- ThreadedSink
