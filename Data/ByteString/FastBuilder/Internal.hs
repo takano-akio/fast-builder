@@ -126,7 +126,7 @@ instance Monoid Builder where
   {-# INLINE mempty #-}
   mappend = (<>)
   {-# INLINE mappend #-}
-  mconcat xs = foldr mappend mempty xs
+  mconcat = foldr mappend mempty
   {-# INLINE mconcat #-}
 
 -- | 'fromString' = 'stringUtf8'
@@ -381,7 +381,7 @@ continueBuilderThreaded !reqV !respV !initialSize !maxSize thunk =
 
 -- | Run the given suspended builder using a new thread.
 toBufferWriter :: MVar Request -> MVar Response -> Ptr Word8 -> X.BufferWriter
-toBufferWriter !reqV !respV thunk buf0 sz0 = E.mask_ $ do
+toBufferWriter !reqV !respV thunk buf0 sz0 = E.mask_ $
   writer Nothing buf0 sz0
   where
     writer !maybeBuilderTid !buf !sz = do
@@ -492,7 +492,7 @@ builderFromString = primMapListBounded P.charUtf8
 
 -- | Turn a value of type @a@ into a 'Builder', using the given 'PI.BoundedPrim'.
 primBounded :: PI.BoundedPrim a -> a -> Builder
-primBounded prim x = write $ writeBoundedPrim prim x
+primBounded prim = write . writeBoundedPrim prim
 {-# INLINE primBounded #-}
 
 -- | Turn a 'Write' into a 'Builder'.
@@ -515,19 +515,19 @@ write (Write size w) = rebuild $ mkBuilder $ do
 
 -- | Turn a value of type @a@ into a 'Builder', using the given 'PI.FixedPrim'.
 primFixed :: PI.FixedPrim a -> a -> Builder
-primFixed prim = \x -> primBounded (PI.toB prim) x
+primFixed prim = primBounded (PI.toB prim)
 {-# INLINE primFixed #-}
 
 -- | Turn a list of values of type @a@ into a 'Builder', using the given
 -- 'PI.BoundedPrim'.
 primMapListBounded :: PI.BoundedPrim a -> [a] -> Builder
-primMapListBounded prim = \xs -> mconcat $ map (primBounded prim) xs
+primMapListBounded prim = mconcat . map (primBounded prim)
 {-# INLINE primMapListBounded #-}
 
 -- | Turn a list of values of type @a@ into a 'Builder', using the given
 -- 'PI.FixedPrim'.
 primMapListFixed :: PI.FixedPrim a -> [a] -> Builder
-primMapListFixed prim = \xs -> primMapListBounded (PI.toB prim) xs
+primMapListFixed prim = primMapListBounded (PI.toB prim)
 {-# INLINE primMapListFixed #-}
 
 -- | Turn a 'S.ByteString' to a 'Builder'.
@@ -772,9 +772,9 @@ growBufferBounded !dRef !fptr !bound !req = do
 -- | Throw a 'ChunkOverflowException' and switches to a 'ThreadedSink'.
 chunkOverflow :: IORef DynamicSink -> Int -> S.ByteString -> BuildM ()
 chunkOverflow !dRef !minSize !chunk = do
-  myTid <- io $ myThreadId
-  reqV <- io $ newEmptyMVar
-  respV <- io $ newEmptyMVar
+  myTid <- io myThreadId
+  reqV <- io newEmptyMVar
+  respV <- io newEmptyMVar
   io $ E.throwTo myTid $ ChunkOverflowException chunk reqV respV minSize
   io $ writeIORef dRef $ ThreadedSink reqV respV
   handleRequest reqV

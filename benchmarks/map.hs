@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveFunctor #-}
 import Control.Concurrent
 import Criterion.Main
 import qualified Data.IntMap as IM
