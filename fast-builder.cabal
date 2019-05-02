@@ -25,10 +25,10 @@ library
   other-modules:       Data.ByteString.FastBuilder.Internal.Prim
 
   -- other-extensions:
-  build-depends:       base >= 4.8 && < 4.13, bytestring >= 0.10.6.0, ghc-prim
+  build-depends:       base >= 4.8 && < 4.14, bytestring >= 0.10.6.0, ghc-prim
   -- hs-source-dirs:
   default-language:    Haskell2010
-  ghc-options:         -Wall -g
+  ghc-options:         -Wall
 
 benchmark aeson
   type:                exitcode-stdio-1.0
