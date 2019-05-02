@@ -1,5 +1,5 @@
 name:                fast-builder
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            Fast ByteString Builder
 description:         An efficient implementation of ByteString builder. It should be faster than
                      the standard implementation in most cases.
