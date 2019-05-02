@@ -3,7 +3,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE CPP #-}
 
 -- | This is an internal module; its interface is unstable.
 module Data.ByteString.FastBuilder.Internal
