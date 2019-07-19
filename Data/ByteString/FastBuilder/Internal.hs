@@ -691,7 +691,7 @@ handleRequest reqV = do
 growBuffer :: IORef (ForeignPtr Word8) -> Int -> BuildM ()
 growBuffer !bufRef !req = do
   cur <- getCur
-  end <- getCur
+  end <- getEnd
   fptr <- io $ readIORef bufRef
   let !base = unsafeForeignPtrToPtr fptr
   let !size = cur `minusPtr` base
