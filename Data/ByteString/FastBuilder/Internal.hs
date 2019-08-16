@@ -36,6 +36,7 @@ module Data.ByteString.FastBuilder.Internal
   , toLazyByteStringWith
   , toStrictByteString
   , hPutBuilder
+  , hPutBuilderLen
   , hPutBuilderWith
 
   -- * Basic builders
@@ -152,8 +153,12 @@ data DynamicSink
       -- size limit is reached. After that, the destination switches
       -- to a 'ThreadedSink'.
 
--- | A mutable buffer. The 'Int' specifies where the data start.
-data Queue = Queue !(ForeignPtr Word8) !Int{-start-}
+-- | A mutable buffer.
+data Queue = Queue
+  { queueBuffer :: !(ForeignPtr Word8)
+  , queueStart :: !Int
+  , queueTotal :: !Int
+  }
   -- TODO: this is not really needed
 
 -- | A request from the driver thread to the builder thread.
@@ -462,19 +467,26 @@ toStrictByteString builder = unsafePerformIO $ do
 
 -- | Output a 'Builder' to a 'IO.Handle'.
 hPutBuilder :: IO.Handle -> Builder -> IO ()
-hPutBuilder !h builder = hPutBuilderWith h 100 4096 builder
+hPutBuilder !h builder = void $ hPutBuilderLen h builder
+{-# INLINE hPutBuilder #-}
+
+-- | Output a 'Builder' to a 'IO.Handle'. Returns the number of bytes written.
+hPutBuilderLen :: IO.Handle -> Builder -> IO Int
+hPutBuilderLen !h builder = hPutBuilderWith h 100 4096 builder
 
 -- | Like 'hPutBuffer', but allows the user to specify the initial
 -- and the subsequent desired buffer sizes. This function may be useful for
 -- setting large buffer when high throughput I/O is needed.
-hPutBuilderWith :: IO.Handle -> Int -> Int -> Builder -> IO ()
+hPutBuilderWith :: IO.Handle -> Int -> Int -> Builder -> IO Int
 hPutBuilderWith !h !initialCap !nextCap builder = do
   fptr <- mallocForeignPtrBytes initialCap
-  qRef <- newIORef $ Queue fptr 0
+  qRef <- newIORef $ Queue fptr 0 0
   let !base = unsafeForeignPtrToPtr fptr
   cur <- runBuilder builder (HandleSink h nextCap qRef)
     base (base `plusPtr` initialCap)
   flushQueue h qRef cur
+  Queue _ _ len <- readIORef qRef
+  return len
 
 ----------------------------------------------------------------
 -- builders
@@ -647,7 +659,7 @@ getBytes_ n = mkBuilder $ do
     HandleSink h nextCap queueRef -> do
       cur <- getCur
       io $ flushQueue h queueRef cur
-      switchQueue queueRef $ max nextCap (I# n)
+      switchQueue queueRef (max nextCap (I# n))
 {-# NOINLINE getBytes_ #-}
 
 -- | Return the remaining size of the current buffer, in bytes.
@@ -715,26 +727,26 @@ growBuffer !bufRef !req = do
 -- the 'Queue'.
 flushQueue :: IO.Handle -> IORef Queue -> Ptr Word8 -> IO ()
 flushQueue !h !qRef !cur = do
-  Queue fptr start <- readIORef qRef
+  Queue fptr start total <- readIORef qRef
   let !end = cur `minusPtr` unsafeForeignPtrToPtr fptr
   when (end > start) $ do
     S.hPut h $ S.fromForeignPtr fptr start (end - start)
-    writeIORef qRef $ Queue fptr end
+    writeIORef qRef $ Queue fptr end $ total + end - start
 
--- | @switchQueue qRef minSize@ discards the old 'Queue' and sets up
+-- | @switchQueue qRef minSize adv@ discards the old 'Queue' and sets up
 -- a new empty 'Queue' of at least @minSize@ large. If the old 'Queue'
 -- is large enough, it is re-used.
 switchQueue :: IORef Queue -> Int -> BuildM ()
 switchQueue !qRef !minSize = do
   end <- getCur
-  Queue fptr _ <- io $ readIORef qRef
+  Queue fptr _ total <- io $ readIORef qRef
   let !base = unsafeForeignPtrToPtr fptr
   let !cap = end `minusPtr` base
   newFptr <- if minSize <= cap
     then return fptr
     else io $ mallocForeignPtrBytes minSize
   let !newBase = unsafeForeignPtrToPtr newFptr
-  io $ writeIORef qRef $ Queue newFptr 0
+  io $ writeIORef qRef $ Queue newFptr 0 total
   setCur newBase
   setEnd $ newBase `plusPtr` max minSize cap
 
