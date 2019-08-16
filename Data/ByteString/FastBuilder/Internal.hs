@@ -157,7 +157,9 @@ data DynamicSink
 data Queue = Queue
   { queueBuffer :: !(ForeignPtr Word8)
   , queueStart :: !Int
+    -- ^ Starting position.
   , queueTotal :: !Int
+    -- ^ Bytes written to the handle so far.
   }
   -- TODO: this is not really needed
 

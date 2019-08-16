@@ -196,6 +196,7 @@ prop_writeWrite :: Word8 -> Word8 -> Bool
 prop_writeWrite w0 w1
   = toStrictByteString (word8 w0 <> word8 w1) == BS.pack [w0, w1]
 
+-- | hPutBuilderLen returns the correct number of bytes.
 prop_length :: BuilderTree -> QC.Property
 prop_length tree = QC.ioProperty $ IO.withFile "/dev/null" IO.WriteMode $ \h -> do
   let b = mkBuilder tree
