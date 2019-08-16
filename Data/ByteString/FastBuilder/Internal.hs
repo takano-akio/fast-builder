@@ -482,12 +482,16 @@ hPutBuilderLen !h builder = hPutBuilderWith h 100 4096 builder
 hPutBuilderWith :: IO.Handle -> Int -> Int -> Builder -> IO Int
 hPutBuilderWith !h !initialCap !nextCap builder = do
   fptr <- mallocForeignPtrBytes initialCap
-  qRef <- newIORef $ Queue fptr 0 0
+  qRef <- newIORef $ Queue
+    { queueBuffer = fptr
+    , queueStart =  0
+    , queueTotal = 0
+    }
   let !base = unsafeForeignPtrToPtr fptr
   cur <- runBuilder builder (HandleSink h nextCap qRef)
     base (base `plusPtr` initialCap)
   flushQueue h qRef cur
-  Queue _ _ len <- readIORef qRef
+  Queue{ queueTotal = len } <- readIORef qRef
   return len
 
 ----------------------------------------------------------------
@@ -729,11 +733,16 @@ growBuffer !bufRef !req = do
 -- the 'Queue'.
 flushQueue :: IO.Handle -> IORef Queue -> Ptr Word8 -> IO ()
 flushQueue !h !qRef !cur = do
-  Queue fptr start total <- readIORef qRef
+  Queue{ queueBuffer = fptr, queueStart = start, queueTotal = total }
+    <- readIORef qRef
   let !end = cur `minusPtr` unsafeForeignPtrToPtr fptr
   when (end > start) $ do
     S.hPut h $ S.fromForeignPtr fptr start (end - start)
-    writeIORef qRef $ Queue fptr end $ total + end - start
+    writeIORef qRef Queue
+      { queueBuffer = fptr
+      , queueStart = end
+      , queueTotal = total + end - start
+      }
 
 -- | @switchQueue qRef minSize adv@ discards the old 'Queue' and sets up
 -- a new empty 'Queue' of at least @minSize@ large. If the old 'Queue'
@@ -741,14 +750,18 @@ flushQueue !h !qRef !cur = do
 switchQueue :: IORef Queue -> Int -> BuildM ()
 switchQueue !qRef !minSize = do
   end <- getCur
-  Queue fptr _ total <- io $ readIORef qRef
+  Queue{ queueBuffer = fptr, queueTotal = total } <- io $ readIORef qRef
   let !base = unsafeForeignPtrToPtr fptr
   let !cap = end `minusPtr` base
   newFptr <- if minSize <= cap
     then return fptr
     else io $ mallocForeignPtrBytes minSize
   let !newBase = unsafeForeignPtrToPtr newFptr
-  io $ writeIORef qRef $ Queue newFptr 0 total
+  io $ writeIORef qRef Queue
+    { queueBuffer = newFptr
+    , queueStart = 0
+    , queueTotal = total
+    }
   setCur newBase
   setEnd $ newBase `plusPtr` max minSize cap
 
