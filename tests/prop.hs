@@ -29,7 +29,8 @@ data BuilderTree
 data BuilderPrim
   = BP_Word8 !Word8
   | BP_Word64le !Word64
-  | BP_ByteString !BS.ByteString
+  | BP_ByteStringC !BS.ByteString
+  | BP_ByteStringI !BS.ByteString
   | BP_Empty
   deriving (Show)
 
@@ -46,7 +47,8 @@ instance QC.Arbitrary BuilderPrim where
   arbitrary = QC.oneof
     [ BP_Word8 <$> QC.arbitrary
     , BP_Word64le <$> QC.arbitrary
-    , BP_ByteString . BS.pack <$> QC.arbitrary
+    , BP_ByteStringC . BS.pack <$> QC.arbitrary
+    , BP_ByteStringI . BS.pack <$> QC.arbitrary
     , pure BP_Empty
     ]
 
@@ -84,7 +86,8 @@ mkBuilder = go
 
     prim (BP_Word8 w) = word8 w
     prim (BP_Word64le w) = word64LE w
-    prim (BP_ByteString bs) = byteString bs
+    prim (BP_ByteStringI bs) = byteStringInsert bs
+    prim (BP_ByteStringC bs) = byteStringCopy bs
     prim BP_Empty = mempty
 
 buildWithBuilder :: Driver -> BuilderTree -> BS.ByteString
@@ -100,7 +103,8 @@ buildWithList = BS.pack . ($[]) . go
     prim (BP_Word64le w) = (list++)
       where
         list = take 8 $ map fromIntegral $ iterate (`div` 256) w
-    prim (BP_ByteString bs) = (BS.unpack bs ++)
+    prim (BP_ByteStringI bs) = (BS.unpack bs ++)
+    prim (BP_ByteStringC bs) = (BS.unpack bs ++)
     prim BP_Empty = id
 
 errorBuilder :: TestException -> Builder
