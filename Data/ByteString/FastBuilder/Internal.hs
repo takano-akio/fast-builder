@@ -615,6 +615,8 @@ byteStringInsert_ bstr = mkBuilder $ do
       cur <- getCur
       io $ flushQueue h queueRef cur
       io $ S.hPut h bstr
+      io $ modifyIORef' queueRef
+        $ \q -> q { queueTotal = queueTotal q + S.length bstr }
 {-# NOINLINE byteStringInsert_ #-}
 
 -- | Turn a C String into a 'Builder'. The behavior is undefined if the given
