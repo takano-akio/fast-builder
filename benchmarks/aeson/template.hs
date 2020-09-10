@@ -11,6 +11,7 @@ module NAME
 
 import Data.Aeson
 import qualified Data.ByteString.Lazy as L
+import qualified Data.HashMap.Strict as H
 import Data.Monoid
 import qualified Data.Scientific as Sci
 import qualified Data.Text as T
@@ -18,7 +19,6 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Vector as V
 
 import LIB
-import HashMapExts
 
 valueToLazyByteString :: Value -> L.ByteString
 valueToLazyByteString = toLazyByteString . fromValue
@@ -51,7 +51,7 @@ fromNumber :: Sci.Scientific -> Builder
 fromNumber = either doubleDec integerDec . Sci.floatingOrInteger
 
 fromObject :: Object -> Builder
-fromObject obj = char8 '{' <> foldMapWithKey f obj <> char8 '}'
+fromObject obj = char8 '{' <> H.foldMapWithKey f obj <> char8 '}'
   where
       f k v =
         fromString k <> char8 ':' <> fromValue v
