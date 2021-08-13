@@ -1,7 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module Main where
 
 import Control.Concurrent
@@ -94,7 +93,7 @@ buildWithBuilder :: Driver -> BuilderTree -> BS.ByteString
 buildWithBuilder drv = runBuilder drv . mkBuilder
 
 buildWithList :: BuilderTree -> BS.ByteString
-buildWithList = BS.pack . ($[]) . go
+buildWithList = BS.pack . ($ []) . go
   where
     go (Leaf p) = prim p
     go (Mappend a b) = go a . go b
