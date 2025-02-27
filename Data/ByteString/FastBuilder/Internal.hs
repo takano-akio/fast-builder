@@ -221,12 +221,11 @@ newtype BuildM a = BuildM { runBuildM :: (a -> Builder) -> Builder }
   deriving (Functor)
 
 instance Applicative BuildM where
-  pure = return
+  pure x = BuildM $ \k -> k x
+  {-# INLINE pure #-}
   (<*>) = ap
 
 instance Monad BuildM where
-  return x = BuildM $ \k -> k x
-  {-# INLINE return #-}
   BuildM b >>= f = BuildM $ \k -> b $ \r -> runBuildM (f r) k
   {-# INLINE (>>=) #-}
 
