@@ -10,13 +10,15 @@ module NAME
 #endif
 
 import Data.Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as L
-import qualified Data.HashMap.Strict as H
 import Data.Monoid
 import qualified Data.Scientific as Sci
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Vector as V
+import GHC.Exts (inline)
 
 import LIB
 
@@ -51,8 +53,8 @@ fromNumber :: Sci.Scientific -> Builder
 fromNumber = either doubleDec integerDec . Sci.floatingOrInteger
 
 fromObject :: Object -> Builder
-fromObject obj = char8 '{' <> H.foldMapWithKey f obj <> char8 '}'
+fromObject obj = char8 '{' <> inline KM.foldMapWithKey f obj <> char8 '}'
   where
       f k v =
-        fromString k <> char8 ':' <> fromValue v
+        fromString (Key.toText k) <> char8 ':' <> fromValue v
         <> char8 ','
